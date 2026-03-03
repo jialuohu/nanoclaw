@@ -15,7 +15,11 @@ import {
 // Set TELEGRAM_ALLOWED_USERS in .env as comma-separated user IDs (e.g. "123456,789012").
 const envAllowed = readEnvFile(['TELEGRAM_ALLOWED_USERS']);
 const ALLOWED_USER_IDS: Set<number> = new Set(
-  (process.env.TELEGRAM_ALLOWED_USERS || envAllowed.TELEGRAM_ALLOWED_USERS || '')
+  (
+    process.env.TELEGRAM_ALLOWED_USERS ||
+    envAllowed.TELEGRAM_ALLOWED_USERS ||
+    ''
+  )
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
@@ -27,7 +31,11 @@ const ALLOWED_USER_IDS: Set<number> = new Set(
  * Send a single message chunk via a Telegram Api instance.
  * Tries Markdown parse_mode first; falls back to plain text if Telegram rejects the formatting.
  */
-async function sendTelegramMessage(api: Api, chatId: string | number, text: string): Promise<void> {
+async function sendTelegramMessage(
+  api: Api,
+  chatId: string | number,
+  text: string,
+): Promise<void> {
   try {
     await api.sendMessage(chatId, text, { parse_mode: 'Markdown' });
   } catch (err: any) {
@@ -102,9 +110,15 @@ export async function sendPoolMessage(
     try {
       await poolApis[idx].setMyName(sender);
       await new Promise((r) => setTimeout(r, 2000));
-      logger.info({ sender, groupFolder, poolIndex: idx }, 'Assigned and renamed pool bot');
+      logger.info(
+        { sender, groupFolder, poolIndex: idx },
+        'Assigned and renamed pool bot',
+      );
     } catch (err) {
-      logger.warn({ sender, err }, 'Failed to rename pool bot (sending anyway)');
+      logger.warn(
+        { sender, err },
+        'Failed to rename pool bot (sending anyway)',
+      );
     }
   }
 
@@ -116,10 +130,17 @@ export async function sendPoolMessage(
       await sendTelegramMessage(api, numericId, text);
     } else {
       for (let i = 0; i < text.length; i += MAX_LENGTH) {
-        await sendTelegramMessage(api, numericId, text.slice(i, i + MAX_LENGTH));
+        await sendTelegramMessage(
+          api,
+          numericId,
+          text.slice(i, i + MAX_LENGTH),
+        );
       }
     }
-    logger.info({ chatId, sender, poolIndex: idx, length: text.length }, 'Pool message sent');
+    logger.info(
+      { chatId, sender, poolIndex: idx, length: text.length },
+      'Pool message sent',
+    );
   } catch (err) {
     logger.error({ chatId, sender, err }, 'Failed to send pool message');
   }
@@ -149,7 +170,10 @@ export class TelegramChannel implements Channel {
     // Block unauthorized users from all interactions
     this.bot.use((ctx, next) => {
       if (!isUserAllowed(ctx.from?.id)) {
-        logger.debug({ userId: ctx.from?.id }, 'Blocked unauthorized Telegram user');
+        logger.debug(
+          { userId: ctx.from?.id },
+          'Blocked unauthorized Telegram user',
+        );
         return; // silently ignore
       }
       return next();
@@ -217,8 +241,15 @@ export class TelegramChannel implements Channel {
       }
 
       // Store chat metadata for discovery
-      const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
-      this.opts.onChatMetadata(chatJid, timestamp, chatName, 'telegram', isGroup);
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        chatName,
+        'telegram',
+        isGroup,
+      );
 
       // Only deliver full message for registered groups
       const group = this.opts.registeredGroups()[chatJid];
@@ -261,8 +292,15 @@ export class TelegramChannel implements Channel {
         'Unknown';
       const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
 
-      const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
-      this.opts.onChatMetadata(chatJid, timestamp, undefined, 'telegram', isGroup);
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        undefined,
+        'telegram',
+        isGroup,
+      );
       this.opts.onMessage(chatJid, {
         id: ctx.message.message_id.toString(),
         chat_jid: chatJid,
@@ -276,9 +314,7 @@ export class TelegramChannel implements Channel {
 
     this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
-    this.bot.on('message:voice', (ctx) =>
-      storeNonText(ctx, '[Voice message]'),
-    );
+    this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
     this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
     this.bot.on('message:document', (ctx) => {
       const name = ctx.message.document?.file_name || 'file';

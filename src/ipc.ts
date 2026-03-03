@@ -437,10 +437,7 @@ export async function processTaskIpc(
           fs.writeFileSync(envFile, lines.join('\n') + '\n');
           // Refresh config snapshot so the agent sees the updated value
           writeConfigSnapshot(sourceGroup);
-          logger.info(
-            { key: data.key, sourceGroup },
-            'Config updated via IPC',
-          );
+          logger.info({ key: data.key, sourceGroup }, 'Config updated via IPC');
         } catch (err) {
           logger.error(
             { key: data.key, err },
