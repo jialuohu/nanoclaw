@@ -44,8 +44,7 @@ vi.mock('google-auth-library', () => ({
 
 // Mock fs for factory credential check
 vi.mock('fs', async () => {
-  const actual =
-    await vi.importActual<typeof import('fs')>('fs');
+  const actual = await vi.importActual<typeof import('fs')>('fs');
   return { ...actual, default: actual };
 });
 
@@ -201,7 +200,9 @@ describe('GoogleCalendarChannel', () => {
       expect(content).toContain('[Calendar Reminder]');
       expect(content).toContain('Team Standup');
       expect(content).toContain('Location: Room 42');
-      expect(content).toContain('Link: https://calendar.google.com/event/evt-upcoming');
+      expect(content).toContain(
+        'Link: https://calendar.google.com/event/evt-upcoming',
+      );
     });
 
     it('deduplicates events (same event polled twice)', async () => {

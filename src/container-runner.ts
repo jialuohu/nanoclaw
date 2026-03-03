@@ -164,13 +164,15 @@ function buildVolumeMounts(
     });
   }
 
-  // Google Calendar credentials directory (for Calendar API inside the container)
+  // Google Calendar credentials directory (for Calendar MCP inside the container)
+  // Host uses ~/.google-calendar/, container mounts to ~/.calendar-mcp/ to match
+  // the @gongrzhe/server-calendar-autoauth-mcp expected path
   const gcalDir = path.join(homeDir, '.google-calendar');
   if (fs.existsSync(gcalDir)) {
     mounts.push({
       hostPath: gcalDir,
-      containerPath: '/home/node/.google-calendar',
-      readonly: false, // needs to refresh OAuth tokens
+      containerPath: '/home/node/.calendar-mcp',
+      readonly: false, // MCP may need to refresh OAuth tokens
     });
   }
 

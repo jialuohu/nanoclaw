@@ -259,9 +259,7 @@ export class GoogleCalendarChannel implements Channel {
 
   private deliverToMainGroup(content: string, eventId: string): void {
     const groups = this.opts.registeredGroups();
-    const mainEntry = Object.entries(groups).find(
-      ([, g]) => g.isMain === true,
-    );
+    const mainEntry = Object.entries(groups).find(([, g]) => g.isMain === true);
 
     if (!mainEntry) {
       logger.debug('No main group registered, skipping calendar notification');
