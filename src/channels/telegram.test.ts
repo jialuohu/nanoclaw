@@ -8,6 +8,12 @@ vi.mock('./registry.js', () => ({ registerChannel: vi.fn() }));
 // Mock env reader (used by the factory, not needed in unit tests)
 vi.mock('../env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
 
+// Mock transcription module
+const mockTranscribeAudio = vi.fn<(buf: Buffer) => Promise<string | null>>();
+vi.mock('../transcription.js', () => ({
+  transcribeAudio: (buf: Buffer) => mockTranscribeAudio(buf),
+}));
+
 // Mock config
 vi.mock('../config.js', () => ({
   ASSISTANT_NAME: 'Andy',
@@ -40,6 +46,7 @@ vi.mock('grammy', () => ({
     api = {
       sendMessage: vi.fn().mockResolvedValue(undefined),
       sendChatAction: vi.fn().mockResolvedValue(undefined),
+      getFile: vi.fn().mockResolvedValue({ file_path: 'voice/file_0.oga' }),
     };
 
     constructor(token: string) {
@@ -157,7 +164,11 @@ function createMediaCtx(overrides: {
       date: overrides.date ?? Math.floor(Date.now() / 1000),
       message_id: overrides.messageId ?? 1,
       caption: overrides.caption,
+      voice: { file_id: 'voice_file_123' },
       ...(overrides.extra || {}),
+    },
+    api: currentBot()?.api ?? {
+      getFile: vi.fn().mockResolvedValue({ file_path: 'voice/file_0.oga' }),
     },
     me: { username: 'andy_ai_bot' },
   };
@@ -185,6 +196,12 @@ async function triggerMediaMessage(
 describe('TelegramChannel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: fetch returns a small buffer for voice downloads
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(Buffer.from('fake-audio-data')),
+    );
+    // Default: transcription succeeds
+    mockTranscribeAudio.mockResolvedValue('Hello world');
   });
 
   afterEach(() => {
@@ -587,17 +604,55 @@ describe('TelegramChannel', () => {
       );
     });
 
-    it('stores voice message with placeholder', async () => {
+    it('transcribes voice message on success', async () => {
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
 
+      mockTranscribeAudio.mockResolvedValue('Hello world');
+      const ctx = createMediaCtx({});
+      await triggerMediaMessage('message:voice', ctx);
+
+      expect(mockTranscribeAudio).toHaveBeenCalledWith(
+        expect.any(Buffer),
+      );
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({ content: '[Voice: Hello world]' }),
+      );
+    });
+
+    it('stores unavailable placeholder when no API key', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      mockTranscribeAudio.mockResolvedValue(null);
       const ctx = createMediaCtx({});
       await triggerMediaMessage('message:voice', ctx);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
         'tg:100200300',
-        expect.objectContaining({ content: '[Voice message]' }),
+        expect.objectContaining({
+          content: '[Voice Message - transcription unavailable]',
+        }),
+      );
+    });
+
+    it('stores failed placeholder when transcription throws', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      mockTranscribeAudio.mockRejectedValue(new Error('API error'));
+      const ctx = createMediaCtx({});
+      await triggerMediaMessage('message:voice', ctx);
+
+      expect(opts.onMessage).toHaveBeenCalledWith(
+        'tg:100200300',
+        expect.objectContaining({
+          content: '[Voice Message - transcription failed]',
+        }),
       );
     });
 
