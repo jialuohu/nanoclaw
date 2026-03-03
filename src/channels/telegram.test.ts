@@ -613,9 +613,7 @@ describe('TelegramChannel', () => {
       const ctx = createMediaCtx({});
       await triggerMediaMessage('message:voice', ctx);
 
-      expect(mockTranscribeAudio).toHaveBeenCalledWith(
-        expect.any(Buffer),
-      );
+      expect(mockTranscribeAudio).toHaveBeenCalledWith(expect.any(Buffer));
       expect(opts.onMessage).toHaveBeenCalledWith(
         'tg:100200300',
         expect.objectContaining({ content: '[Voice: Hello world]' }),

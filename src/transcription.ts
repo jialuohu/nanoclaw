@@ -6,9 +6,7 @@ import { logger } from './logger.js';
  * Returns the transcript string on success, null if OPENAI_API_KEY is not set.
  * Throws on API errors so callers can handle failures explicitly.
  */
-export async function transcribeAudio(
-  buffer: Buffer,
-): Promise<string | null> {
+export async function transcribeAudio(buffer: Buffer): Promise<string | null> {
   const env = readEnvFile(['OPENAI_API_KEY']);
   const apiKey = env.OPENAI_API_KEY;
 
