@@ -280,6 +280,93 @@ Use available_groups.json to find the JID for a group. The folder name must be c
   },
 );
 
+server.tool(
+  'get_config',
+  'Read the current NanoClaw configuration (.env values). Secret keys (API tokens, bot tokens) are redacted. Main group only.',
+  {},
+  async () => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can read config.' }],
+        isError: true,
+      };
+    }
+
+    const snapshotFile = path.join(IPC_DIR, 'config_snapshot.json');
+    try {
+      const config = JSON.parse(fs.readFileSync(snapshotFile, 'utf-8'));
+      const lines = Object.entries(config)
+        .map(([k, v]) => `${k}=${v}`)
+        .join('\n');
+      return {
+        content: [{ type: 'text' as const, text: lines || 'No config values found.' }],
+      };
+    } catch {
+      return {
+        content: [{ type: 'text' as const, text: 'No config snapshot available.' }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'set_config',
+  'Update a .env configuration value. Requires restart_service to take effect. Main group only.',
+  {
+    key: z.string().describe('The config key (e.g., CLAUDE_MODEL, TELEGRAM_ALLOWED_USERS)'),
+    value: z.string().describe('The new value to set'),
+  },
+  async (args) => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can set config.' }],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'set_config',
+      key: args.key,
+      value: args.value,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: `Config update requested: ${args.key}=${args.value}. Use restart_service to apply.` }],
+    };
+  },
+);
+
+server.tool(
+  'restart_service',
+  'Restart the NanoClaw service to apply config changes. Main group only. The current agent session will end.',
+  {},
+  async () => {
+    if (!isMain) {
+      return {
+        content: [{ type: 'text' as const, text: 'Only the main group can restart the service.' }],
+        isError: true,
+      };
+    }
+
+    const data = {
+      type: 'restart_service',
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    };
+
+    writeIpcFile(TASKS_DIR, data);
+
+    return {
+      content: [{ type: 'text' as const, text: 'Service restart requested. The service will restart momentarily.' }],
+    };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

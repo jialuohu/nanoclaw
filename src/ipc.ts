@@ -4,7 +4,8 @@ import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
-import { AvailableGroup } from './container-runner.js';
+import { sendPoolMessage } from './channels/telegram.js';
+import { AvailableGroup, writeConfigSnapshot } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
@@ -80,9 +81,18 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  await deps.sendMessage(data.chatJid, data.text);
+                  if (data.sender && data.chatJid.startsWith('tg:')) {
+                    await sendPoolMessage(
+                      data.chatJid,
+                      data.text,
+                      data.sender,
+                      sourceGroup,
+                    );
+                  } else {
+                    await deps.sendMessage(data.chatJid, data.text);
+                  }
                   logger.info(
-                    { chatJid: data.chatJid, sourceGroup },
+                    { chatJid: data.chatJid, sourceGroup, sender: data.sender },
                     'IPC message sent',
                   );
                 } else {
@@ -164,6 +174,9 @@ export async function processTaskIpc(
     groupFolder?: string;
     chatJid?: string;
     targetJid?: string;
+    // For set_config
+    key?: string;
+    value?: string;
     // For register_group
     jid?: string;
     name?: string;
@@ -381,6 +394,74 @@ export async function processTaskIpc(
           'Invalid register_group request - missing required fields',
         );
       }
+      break;
+
+    case 'set_config':
+      if (!isMain) {
+        logger.warn({ sourceGroup }, 'Unauthorized set_config attempt blocked');
+        break;
+      }
+      if (data.key && data.value !== undefined) {
+        const envFile = path.join(process.cwd(), '.env');
+        try {
+          let content = '';
+          try {
+            content = fs.readFileSync(envFile, 'utf-8');
+          } catch {
+            // .env doesn't exist yet, will create
+          }
+
+          const lines = content.split('\n');
+          let found = false;
+          for (let i = 0; i < lines.length; i++) {
+            const trimmed = lines[i].trim();
+            if (!trimmed || trimmed.startsWith('#')) continue;
+            const eqIdx = trimmed.indexOf('=');
+            if (eqIdx === -1) continue;
+            const lineKey = trimmed.slice(0, eqIdx).trim();
+            if (lineKey === data.key) {
+              lines[i] = `${data.key}=${data.value}`;
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            // Remove trailing empty element from split (trailing newline)
+            if (lines.length > 0 && lines[lines.length - 1] === '') {
+              lines.pop();
+            }
+            lines.push(`${data.key}=${data.value}`);
+          }
+
+          // Ensure file ends with newline
+          fs.writeFileSync(envFile, lines.join('\n') + '\n');
+          // Refresh config snapshot so the agent sees the updated value
+          writeConfigSnapshot(sourceGroup);
+          logger.info(
+            { key: data.key, sourceGroup },
+            'Config updated via IPC',
+          );
+        } catch (err) {
+          logger.error(
+            { key: data.key, err },
+            'Failed to update config via IPC',
+          );
+        }
+      }
+      break;
+
+    case 'restart_service':
+      if (!isMain) {
+        logger.warn(
+          { sourceGroup },
+          'Unauthorized restart_service attempt blocked',
+        );
+        break;
+      }
+      logger.info({ sourceGroup }, 'Service restart requested via IPC');
+      // Give IPC processing a moment to clean up, then exit.
+      // systemd will restart the service automatically.
+      setTimeout(() => process.exit(0), 1000);
       break;
 
     default:
