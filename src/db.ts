@@ -158,6 +158,11 @@ export function _initTestDatabase(): void {
   createSchema(db);
 }
 
+/** @internal - for tests only. Returns the raw database instance. */
+export function _getTestDb(): InstanceType<typeof Database> {
+  return db;
+}
+
 /**
  * Store chat metadata only (no message content).
  * Used for all chats to enable group discovery without storing sensitive content.
@@ -554,15 +559,25 @@ export function getRegisteredGroup(
     );
     return undefined;
   }
+  let containerConfig: RegisteredGroup['containerConfig'];
+  if (row.container_config) {
+    try {
+      containerConfig = JSON.parse(row.container_config);
+    } catch (err) {
+      logger.warn(
+        { jid: row.jid, err },
+        'Invalid container_config JSON, skipping',
+      );
+      containerConfig = undefined;
+    }
+  }
   return {
     jid: row.jid,
     name: row.name,
     folder: row.folder,
     trigger: row.trigger_pattern,
     added_at: row.added_at,
-    containerConfig: row.container_config
-      ? JSON.parse(row.container_config)
-      : undefined,
+    containerConfig,
     requiresTrigger:
       row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     isMain: row.is_main === 1 ? true : undefined,
@@ -608,14 +623,24 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       );
       continue;
     }
+    let containerConfig: RegisteredGroup['containerConfig'];
+    if (row.container_config) {
+      try {
+        containerConfig = JSON.parse(row.container_config);
+      } catch (err) {
+        logger.warn(
+          { jid: row.jid, err },
+          'Invalid container_config JSON, skipping',
+        );
+        containerConfig = undefined;
+      }
+    }
     result[row.jid] = {
       name: row.name,
       folder: row.folder,
       trigger: row.trigger_pattern,
       added_at: row.added_at,
-      containerConfig: row.container_config
-        ? JSON.parse(row.container_config)
-        : undefined,
+      containerConfig,
       requiresTrigger:
         row.requires_trigger === null ? undefined : row.requires_trigger === 1,
       isMain: row.is_main === 1 ? true : undefined,

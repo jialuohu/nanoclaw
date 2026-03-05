@@ -22,6 +22,16 @@ vi.mock('fs', async () => {
   };
 });
 
+// Mock logger
+vi.mock('./logger.js', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
 describe('GroupQueue', () => {
   let queue: GroupQueue;
 
@@ -480,5 +490,79 @@ describe('GroupQueue', () => {
 
     resolveProcess!();
     await vi.advanceTimersByTimeAsync(10);
+  });
+
+  // --- Error logging for sendMessage and closeStdin ---
+
+  it('sendMessage logs warning when fs write fails', async () => {
+    const fs = await import('fs');
+    const { logger } = await import('./logger.js');
+
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>(() => {}); // block forever
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess(
+      'group1@g.us',
+      {} as any,
+      'container-1',
+      'test-group',
+    );
+
+    // Make mkdirSync throw
+    const mkdirSync = vi.mocked(fs.default.mkdirSync);
+    mkdirSync.mockImplementationOnce(() => {
+      throw new Error('disk full');
+    });
+
+    const result = queue.sendMessage('group1@g.us', 'hello');
+    expect(result).toBe(false);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        err: expect.any(Error),
+        groupJid: 'group1@g.us',
+      }),
+      'Failed to send IPC message',
+    );
+  });
+
+  it('closeStdin logs warning when fs write fails', async () => {
+    const fs = await import('fs');
+    const { logger } = await import('./logger.js');
+
+    const processMessages = vi.fn(async () => {
+      await new Promise<void>(() => {}); // block forever
+      return true;
+    });
+
+    queue.setProcessMessagesFn(processMessages);
+    queue.enqueueMessageCheck('group1@g.us');
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess(
+      'group1@g.us',
+      {} as any,
+      'container-1',
+      'test-group',
+    );
+
+    // Make mkdirSync throw
+    const mkdirSync = vi.mocked(fs.default.mkdirSync);
+    vi.mocked(logger.warn).mockClear();
+    mkdirSync.mockImplementationOnce(() => {
+      throw new Error('permission denied');
+    });
+
+    queue.closeStdin('group1@g.us');
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        err: expect.any(Error),
+        groupJid: 'group1@g.us',
+      }),
+      'Failed to send IPC message',
+    );
   });
 });

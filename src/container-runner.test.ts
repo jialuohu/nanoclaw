@@ -87,7 +87,14 @@ vi.mock('child_process', async () => {
   };
 });
 
-import { runContainerAgent, ContainerOutput } from './container-runner.js';
+import {
+  runContainerAgent,
+  writeConfigSnapshot,
+  writeTasksSnapshot,
+  writeGroupsSnapshot,
+  ContainerOutput,
+} from './container-runner.js';
+import fs from 'fs';
 import type { RegisteredGroup } from './types.js';
 
 const testGroup: RegisteredGroup = {
@@ -207,5 +214,198 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
+  });
+});
+
+// --- writeConfigSnapshot tests ---
+
+describe('writeConfigSnapshot', () => {
+  beforeEach(() => {
+    vi.mocked(fs.mkdirSync).mockClear().mockReturnValue(undefined);
+    vi.mocked(fs.writeFileSync).mockClear().mockReturnValue(undefined);
+    vi.mocked(fs.readFileSync).mockClear();
+  });
+
+  it('writes redacted config for secret keys', () => {
+    vi.mocked(fs.readFileSync).mockReturnValue(
+      'TELEGRAM_BOT_TOKEN=secret123\nSOME_KEY=visible\n',
+    );
+
+    writeConfigSnapshot('test-group');
+
+    const writeCalls = vi.mocked(fs.writeFileSync).mock.calls;
+    // Find the call that writes config_snapshot.json
+    const snapshotCall = writeCalls.find(
+      (c) => typeof c[0] === 'string' && c[0].includes('config_snapshot.json'),
+    );
+    expect(snapshotCall).toBeDefined();
+    const written = JSON.parse(snapshotCall![1] as string);
+    expect(written.TELEGRAM_BOT_TOKEN).toBe('***REDACTED***');
+    expect(written.SOME_KEY).toBe('visible');
+  });
+
+  it('skips when no .env file exists', () => {
+    vi.mocked(fs.readFileSync).mockImplementation(() => {
+      throw new Error('ENOENT');
+    });
+
+    writeConfigSnapshot('test-group');
+
+    const writeCalls = vi.mocked(fs.writeFileSync).mock.calls;
+    const snapshotCall = writeCalls.find(
+      (c) => typeof c[0] === 'string' && c[0].includes('config_snapshot.json'),
+    );
+    expect(snapshotCall).toBeUndefined();
+  });
+
+  it('strips quotes from .env values', () => {
+    vi.mocked(fs.readFileSync).mockReturnValue(
+      'MY_KEY="quoted value"\nOTHER=\'single quoted\'\n',
+    );
+
+    writeConfigSnapshot('test-group');
+
+    const writeCalls = vi.mocked(fs.writeFileSync).mock.calls;
+    const snapshotCall = writeCalls.find(
+      (c) => typeof c[0] === 'string' && c[0].includes('config_snapshot.json'),
+    );
+    expect(snapshotCall).toBeDefined();
+    const written = JSON.parse(snapshotCall![1] as string);
+    expect(written.MY_KEY).toBe('quoted value');
+    expect(written.OTHER).toBe('single quoted');
+  });
+
+  it('redacts OPENAI_API_KEY', () => {
+    vi.mocked(fs.readFileSync).mockReturnValue(
+      'OPENAI_API_KEY=sk-test-1234\nSOME_KEY=visible\n',
+    );
+
+    writeConfigSnapshot('test-group');
+
+    const writeCalls = vi.mocked(fs.writeFileSync).mock.calls;
+    const snapshotCall = writeCalls.find(
+      (c) => typeof c[0] === 'string' && c[0].includes('config_snapshot.json'),
+    );
+    expect(snapshotCall).toBeDefined();
+    const written = JSON.parse(snapshotCall![1] as string);
+    expect(written.OPENAI_API_KEY).toBe('***REDACTED***');
+    expect(written.SOME_KEY).toBe('visible');
+  });
+});
+
+// --- writeTasksSnapshot tests ---
+
+describe('writeTasksSnapshot', () => {
+  beforeEach(() => {
+    vi.mocked(fs.mkdirSync).mockClear().mockReturnValue(undefined);
+    vi.mocked(fs.writeFileSync).mockClear().mockReturnValue(undefined);
+  });
+
+  const allTasks = [
+    {
+      id: 'task-1',
+      groupFolder: 'group-a',
+      prompt: 'do A',
+      schedule_type: 'once',
+      schedule_value: '2025-06-01T00:00:00.000Z',
+      status: 'active',
+      next_run: '2025-06-01T00:00:00.000Z',
+    },
+    {
+      id: 'task-2',
+      groupFolder: 'group-b',
+      prompt: 'do B',
+      schedule_type: 'cron',
+      schedule_value: '0 9 * * *',
+      status: 'active',
+      next_run: '2025-06-02T09:00:00.000Z',
+    },
+  ];
+
+  it('filters tasks for non-main group', () => {
+    writeTasksSnapshot('group-a', false, allTasks);
+
+    const writeCalls = vi.mocked(fs.writeFileSync).mock.calls;
+    const tasksCall = writeCalls.find(
+      (c) => typeof c[0] === 'string' && c[0].includes('current_tasks.json'),
+    );
+    expect(tasksCall).toBeDefined();
+    const written = JSON.parse(tasksCall![1] as string);
+    expect(written).toHaveLength(1);
+    expect(written[0].id).toBe('task-1');
+    expect(written[0].groupFolder).toBe('group-a');
+  });
+
+  it('shows all tasks for main group', () => {
+    writeTasksSnapshot('group-a', true, allTasks);
+
+    const writeCalls = vi.mocked(fs.writeFileSync).mock.calls;
+    const tasksCall = writeCalls.find(
+      (c) => typeof c[0] === 'string' && c[0].includes('current_tasks.json'),
+    );
+    expect(tasksCall).toBeDefined();
+    const written = JSON.parse(tasksCall![1] as string);
+    expect(written).toHaveLength(2);
+  });
+});
+
+// --- writeGroupsSnapshot tests ---
+
+describe('writeGroupsSnapshot', () => {
+  beforeEach(() => {
+    vi.mocked(fs.mkdirSync).mockClear().mockReturnValue(undefined);
+    vi.mocked(fs.writeFileSync).mockClear().mockReturnValue(undefined);
+  });
+
+  const availableGroups = [
+    {
+      jid: 'g1@g.us',
+      name: 'Group 1',
+      lastActivity: '2025-01-01T00:00:00.000Z',
+      isRegistered: true,
+    },
+    {
+      jid: 'g2@g.us',
+      name: 'Group 2',
+      lastActivity: '2025-01-02T00:00:00.000Z',
+      isRegistered: false,
+    },
+  ];
+
+  it('shows all groups for main, empty for non-main', () => {
+    // Main sees all
+    writeGroupsSnapshot(
+      'main-group',
+      true,
+      availableGroups,
+      new Set(['g1@g.us']),
+    );
+
+    const writeCallsMain = vi.mocked(fs.writeFileSync).mock.calls;
+    const mainCall = writeCallsMain.find(
+      (c) => typeof c[0] === 'string' && c[0].includes('available_groups.json'),
+    );
+    expect(mainCall).toBeDefined();
+    const mainWritten = JSON.parse(mainCall![1] as string);
+    expect(mainWritten.groups).toHaveLength(2);
+    expect(mainWritten.lastSync).toBeDefined();
+
+    vi.mocked(fs.writeFileSync).mockClear();
+
+    // Non-main sees empty
+    writeGroupsSnapshot(
+      'other-group',
+      false,
+      availableGroups,
+      new Set(['g1@g.us']),
+    );
+
+    const writeCallsOther = vi.mocked(fs.writeFileSync).mock.calls;
+    const otherCall = writeCallsOther.find(
+      (c) => typeof c[0] === 'string' && c[0].includes('available_groups.json'),
+    );
+    expect(otherCall).toBeDefined();
+    const otherWritten = JSON.parse(otherCall![1] as string);
+    expect(otherWritten.groups).toHaveLength(0);
   });
 });

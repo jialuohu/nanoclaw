@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import {
   _initTestDatabase,
@@ -674,5 +674,125 @@ describe('register_group success', () => {
     );
 
     expect(getRegisteredGroup('partial@g.us')).toBeUndefined();
+  });
+});
+
+// --- set_config authorization ---
+
+describe('set_config', () => {
+  it('updates .env file for main group', async () => {
+    // Mock fs to capture writes
+    const fs = await import('fs');
+    const originalReadFileSync = fs.default.readFileSync;
+    const originalWriteFileSync = fs.default.writeFileSync;
+    const envPath = require('path').join(process.cwd(), '.env');
+
+    let writtenContent = '';
+    const readSpy = vi.spyOn(fs.default, 'readFileSync').mockImplementation(((
+      filePath: string,
+      encoding?: string,
+    ) => {
+      if (filePath === envPath) {
+        return 'EXISTING_KEY=old_value\nOTHER_KEY=keep\n';
+      }
+      return originalReadFileSync(filePath, encoding as BufferEncoding);
+    }) as typeof fs.default.readFileSync);
+
+    const writeSpy = vi.spyOn(fs.default, 'writeFileSync').mockImplementation(((
+      filePath: string,
+      data: string,
+    ) => {
+      if (filePath === envPath) {
+        writtenContent = data;
+        return;
+      }
+      return originalWriteFileSync(filePath, data);
+    }) as typeof fs.default.writeFileSync);
+
+    try {
+      await processTaskIpc(
+        {
+          type: 'set_config',
+          key: 'EXISTING_KEY',
+          value: 'new_value',
+        },
+        'whatsapp_main',
+        true,
+        deps,
+      );
+
+      expect(writtenContent).toContain('EXISTING_KEY=new_value');
+      expect(writtenContent).toContain('OTHER_KEY=keep');
+    } finally {
+      readSpy.mockRestore();
+      writeSpy.mockRestore();
+    }
+  });
+
+  it('rejected for non-main group', async () => {
+    const fs = await import('fs');
+    const writeSpy = vi.spyOn(fs.default, 'writeFileSync');
+
+    try {
+      await processTaskIpc(
+        {
+          type: 'set_config',
+          key: 'SOME_KEY',
+          value: 'hacked',
+        },
+        'other-group',
+        false,
+        deps,
+      );
+
+      // writeFileSync should not have been called with .env path
+      const envWrites = writeSpy.mock.calls.filter(
+        (c) => typeof c[0] === 'string' && c[0].endsWith('.env'),
+      );
+      expect(envWrites).toHaveLength(0);
+    } finally {
+      writeSpy.mockRestore();
+    }
+  });
+});
+
+// --- refresh_groups authorization ---
+
+describe('refresh_groups via IPC', () => {
+  it('calls syncGroups for main group', async () => {
+    const syncGroupsSpy = vi.fn(async () => {});
+    const writeGroupsSnapshotSpy = vi.fn();
+    const localDeps: IpcDeps = {
+      ...deps,
+      syncGroups: syncGroupsSpy,
+      writeGroupsSnapshot: writeGroupsSnapshotSpy,
+    };
+
+    await processTaskIpc(
+      { type: 'refresh_groups' },
+      'whatsapp_main',
+      true,
+      localDeps,
+    );
+
+    expect(syncGroupsSpy).toHaveBeenCalledWith(true);
+    expect(writeGroupsSnapshotSpy).toHaveBeenCalled();
+  });
+
+  it('rejected for non-main group', async () => {
+    const syncGroupsSpy = vi.fn(async () => {});
+    const localDeps: IpcDeps = {
+      ...deps,
+      syncGroups: syncGroupsSpy,
+    };
+
+    await processTaskIpc(
+      { type: 'refresh_groups' },
+      'other-group',
+      false,
+      localDeps,
+    );
+
+    expect(syncGroupsSpy).not.toHaveBeenCalled();
   });
 });

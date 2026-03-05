@@ -2,12 +2,14 @@ import { describe, it, expect, beforeEach } from 'vitest';
 
 import {
   _initTestDatabase,
+  _getTestDb,
   createTask,
   deleteTask,
   getAllChats,
   getAllRegisteredGroups,
   getMessagesSince,
   getNewMessages,
+  getRegisteredGroup,
   getTaskById,
   setRegisteredGroup,
   storeChatMetadata,
@@ -422,5 +424,59 @@ describe('registered group isMain', () => {
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
+  });
+});
+
+// --- Corrupted container_config JSON ---
+
+describe('corrupted container_config', () => {
+  it('getRegisteredGroup returns group with undefined containerConfig on corrupted JSON', () => {
+    setRegisteredGroup('corrupt@g.us', {
+      name: 'Corrupt Group',
+      folder: 'whatsapp_corrupt',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      containerConfig: { timeout: 5000 },
+    });
+
+    // Corrupt the container_config directly in the DB
+    const db = _getTestDb();
+    db.prepare(
+      "UPDATE registered_groups SET container_config = '{bad json' WHERE jid = ?",
+    ).run('corrupt@g.us');
+
+    const group = getRegisteredGroup('corrupt@g.us');
+    expect(group).toBeDefined();
+    expect(group!.name).toBe('Corrupt Group');
+    expect(group!.containerConfig).toBeUndefined();
+  });
+
+  it('getAllRegisteredGroups handles corrupted container_config gracefully', () => {
+    setRegisteredGroup('good@g.us', {
+      name: 'Good Group',
+      folder: 'whatsapp_good',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      containerConfig: { timeout: 10000 },
+    });
+    setRegisteredGroup('bad@g.us', {
+      name: 'Bad Group',
+      folder: 'whatsapp_bad',
+      trigger: '@Andy',
+      added_at: '2024-01-01T00:00:00.000Z',
+      containerConfig: { timeout: 20000 },
+    });
+
+    // Corrupt one group's container_config
+    const db = _getTestDb();
+    db.prepare(
+      "UPDATE registered_groups SET container_config = 'not-json' WHERE jid = ?",
+    ).run('bad@g.us');
+
+    const groups = getAllRegisteredGroups();
+    expect(groups['good@g.us']).toBeDefined();
+    expect(groups['good@g.us'].containerConfig).toEqual({ timeout: 10000 });
+    expect(groups['bad@g.us']).toBeDefined();
+    expect(groups['bad@g.us'].containerConfig).toBeUndefined();
   });
 });
