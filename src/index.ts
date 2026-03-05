@@ -225,6 +225,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
     if (result.status === 'success') {
       queue.notifyIdle(chatJid);
+      setStarOfficeState('idle', 'Ready');
     }
 
     if (result.status === 'error') {
@@ -441,6 +442,7 @@ async function startMessageLoop(): Promise<void> {
           const formatted = formatMessages(messagesToSend);
 
           if (queue.sendMessage(chatJid, formatted)) {
+            setStarOfficeState('writing', `Processing message for ${group.name}`);
             logger.debug(
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
@@ -550,8 +552,13 @@ async function main(): Promise<void> {
       );
       continue;
     }
+    try {
+      await channel.connect();
+    } catch (err) {
+      logger.error({ channel: channelName, err }, 'Channel failed to connect — skipping');
+      continue;
+    }
     channels.push(channel);
-    await channel.connect();
   }
   if (channels.length === 0) {
     logger.fatal('No channels connected');
