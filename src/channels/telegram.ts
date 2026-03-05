@@ -184,8 +184,8 @@ export class TelegramChannel implements Channel {
     this.bot.command('start', (ctx) => {
       ctx.reply(
         `Hello! I'm ${ASSISTANT_NAME}, your personal AI assistant.\n\n` +
-        `Mention me with @${ASSISTANT_NAME} followed by your message to chat.\n` +
-        `Use /help to see all available commands.`,
+          `Mention me with @${ASSISTANT_NAME} followed by your message to chat.\n` +
+          `Use /help to see all available commands.`,
       );
     });
 
@@ -193,12 +193,12 @@ export class TelegramChannel implements Channel {
     this.bot.command('help', (ctx) => {
       ctx.reply(
         `*Available Commands:*\n\n` +
-        `/start - Welcome message\n` +
-        `/help - Show this help\n` +
-        `/ping - Check if I'm online\n` +
-        `/chatid - Get this chat's registration ID\n` +
-        `/status - Show bot status\n\n` +
-        `*To chat:* Mention @${ASSISTANT_NAME} followed by your message.`,
+          `/start - Welcome message\n` +
+          `/help - Show this help\n` +
+          `/ping - Check if I'm online\n` +
+          `/chatid - Get this chat's registration ID\n` +
+          `/status - Show bot status\n\n` +
+          `*To chat:* Mention @${ASSISTANT_NAME} followed by your message.`,
         { parse_mode: 'Markdown' },
       );
     });
@@ -232,9 +232,9 @@ export class TelegramChannel implements Channel {
       const minutes = Math.floor((uptime % 3600) / 60);
       ctx.reply(
         `*${ASSISTANT_NAME} Status*\n\n` +
-        `Status: Online\n` +
-        `Uptime: ${hours}h ${minutes}m\n` +
-        `Registered groups: ${groupCount}`,
+          `Status: Online\n` +
+          `Uptime: ${hours}h ${minutes}m\n` +
+          `Registered groups: ${groupCount}`,
         { parse_mode: 'Markdown' },
       );
     });
@@ -442,12 +442,15 @@ export class TelegramChannel implements Channel {
 
           // Register commands with BotFather so they appear in the "/" menu
           this.bot!.api.setMyCommands([
-            { command: 'start', description: 'Welcome message and usage instructions' },
+            {
+              command: 'start',
+              description: 'Welcome message and usage instructions',
+            },
             { command: 'help', description: 'Show available commands' },
             { command: 'ping', description: 'Check if bot is online' },
             { command: 'chatid', description: 'Get chat registration ID' },
             { command: 'status', description: 'Show bot status' },
-          ]).catch(err => logger.warn({ err }, 'Failed to set bot commands'));
+          ]).catch((err) => logger.warn({ err }, 'Failed to set bot commands'));
 
           resolve();
         },

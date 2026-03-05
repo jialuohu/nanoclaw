@@ -312,7 +312,10 @@ function cleanupStaleContainers(): void {
       ).trim();
       if (result) {
         const ids = result.split('\n').filter(Boolean);
-        logger.info({ count: ids.length, status }, 'Cleaning up stale containers');
+        logger.info(
+          { count: ids.length, status },
+          'Cleaning up stale containers',
+        );
         execSync(`${CONTAINER_RUNTIME_BIN} rm -f ${ids.join(' ')}`, {
           timeout: 10000,
         });

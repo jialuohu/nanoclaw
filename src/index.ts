@@ -345,7 +345,10 @@ async function runAgent(
     return 'success';
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
-    setStarOfficeState('error', err instanceof Error ? err.message : 'Agent error');
+    setStarOfficeState(
+      'error',
+      err instanceof Error ? err.message : 'Agent error',
+    );
     return 'error';
   }
 }

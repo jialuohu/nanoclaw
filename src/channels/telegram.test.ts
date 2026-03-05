@@ -995,9 +995,7 @@ describe('TelegramChannel', () => {
 
       await handler(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('Andy'),
-      );
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Andy'));
     });
 
     it('/help replies with command list', async () => {
@@ -1038,7 +1036,10 @@ describe('TelegramChannel', () => {
       await channel.connect();
 
       expect(currentBot().api.setMyCommands).toHaveBeenCalledWith([
-        { command: 'start', description: 'Welcome message and usage instructions' },
+        {
+          command: 'start',
+          description: 'Welcome message and usage instructions',
+        },
         { command: 'help', description: 'Show available commands' },
         { command: 'ping', description: 'Check if bot is online' },
         { command: 'chatid', description: 'Get chat registration ID' },
