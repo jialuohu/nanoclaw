@@ -47,6 +47,7 @@ vi.mock('grammy', () => ({
       sendMessage: vi.fn().mockResolvedValue(undefined),
       sendChatAction: vi.fn().mockResolvedValue(undefined),
       getFile: vi.fn().mockResolvedValue({ file_path: 'voice/file_0.oga' }),
+      setMyCommands: vi.fn().mockResolvedValue(undefined),
     };
 
     constructor(token: string) {
@@ -226,8 +227,11 @@ describe('TelegramChannel', () => {
 
       await channel.connect();
 
+      expect(currentBot().commandHandlers.has('start')).toBe(true);
+      expect(currentBot().commandHandlers.has('help')).toBe(true);
       expect(currentBot().commandHandlers.has('chatid')).toBe(true);
       expect(currentBot().commandHandlers.has('ping')).toBe(true);
+      expect(currentBot().commandHandlers.has('status')).toBe(true);
       expect(currentBot().filterHandlers.has('message:text')).toBe(true);
       expect(currentBot().filterHandlers.has('message:photo')).toBe(true);
       expect(currentBot().filterHandlers.has('message:video')).toBe(true);
@@ -979,6 +983,67 @@ describe('TelegramChannel', () => {
       await handler(ctx);
 
       expect(ctx.reply).toHaveBeenCalledWith('Andy is online.');
+    });
+
+    it('/start replies with welcome message', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const handler = currentBot().commandHandlers.get('start')!;
+      const ctx = { reply: vi.fn() };
+
+      await handler(ctx);
+
+      expect(ctx.reply).toHaveBeenCalledWith(
+        expect.stringContaining('Andy'),
+      );
+    });
+
+    it('/help replies with command list', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const handler = currentBot().commandHandlers.get('help')!;
+      const ctx = { reply: vi.fn() };
+
+      await handler(ctx);
+
+      expect(ctx.reply).toHaveBeenCalledWith(
+        expect.stringContaining('/start'),
+        expect.objectContaining({ parse_mode: 'Markdown' }),
+      );
+    });
+
+    it('/status replies with bot status info', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      const handler = currentBot().commandHandlers.get('status')!;
+      const ctx = { reply: vi.fn() };
+
+      await handler(ctx);
+
+      expect(ctx.reply).toHaveBeenCalledWith(
+        expect.stringContaining('Registered groups: 1'),
+        expect.objectContaining({ parse_mode: 'Markdown' }),
+      );
+    });
+
+    it('registers commands with BotFather on connect', async () => {
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      expect(currentBot().api.setMyCommands).toHaveBeenCalledWith([
+        { command: 'start', description: 'Welcome message and usage instructions' },
+        { command: 'help', description: 'Show available commands' },
+        { command: 'ping', description: 'Check if bot is online' },
+        { command: 'chatid', description: 'Get chat registration ID' },
+        { command: 'status', description: 'Show bot status' },
+      ]);
     });
   });
 

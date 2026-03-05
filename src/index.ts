@@ -308,6 +308,9 @@ async function runAgent(
       }
     : undefined;
 
+  // Update Star-Office-UI status (best-effort)
+  setStarOfficeState('writing', `Processing message for ${group.name}`);
+
   try {
     const output = await runContainerAgent(
       group,
@@ -334,14 +337,30 @@ async function runAgent(
         { group: group.name, error: output.error },
         'Container agent error',
       );
+      setStarOfficeState('error', output.error || 'Agent error');
       return 'error';
     }
 
+    setStarOfficeState('idle', 'Ready');
     return 'success';
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
+    setStarOfficeState('error', err instanceof Error ? err.message : 'Agent error');
     return 'error';
   }
+}
+
+/**
+ * Update Star-Office-UI agent state (best-effort, non-blocking).
+ */
+function setStarOfficeState(state: string, detail: string): void {
+  fetch('http://127.0.0.1:18791/set_state', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ state, detail }),
+  }).catch(() => {
+    // Best-effort — Star-Office-UI may not be running
+  });
 }
 
 async function startMessageLoop(): Promise<void> {

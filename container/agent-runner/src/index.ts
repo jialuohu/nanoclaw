@@ -425,6 +425,7 @@ async function runQuery(
     options: {
       cwd: '/workspace/group',
       model: claudeModel,
+      maxThinkingTokens: 0,
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
@@ -442,6 +443,10 @@ async function runQuery(
         'mcp__nanoclaw__*',
         'mcp__gmail__*',
         'mcp__google_calendar__*',
+        'mcp__github__*',
+        'mcp__zotero__*',
+        'mcp__google_workspace__*',
+        'mcp__paper_search__*',
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -464,6 +469,29 @@ async function runQuery(
         google_calendar: {
           command: 'npx',
           args: ['-y', '@gongrzhe/server-calendar-autoauth-mcp'],
+        },
+        github: {
+          command: 'npx',
+          args: ['-y', '@modelcontextprotocol/server-github'],
+          env: {
+            GITHUB_PERSONAL_ACCESS_TOKEN: sdkEnv.GITHUB_PERSONAL_ACCESS_TOKEN || '',
+          },
+        },
+        zotero: {
+          command: 'npx',
+          args: ['-y', 'mcp-zotero'],
+          env: {
+            ZOTERO_API_KEY: sdkEnv.ZOTERO_API_KEY || '',
+            ZOTERO_USER_ID: sdkEnv.ZOTERO_USER_ID || '',
+          },
+        },
+        google_workspace: {
+          command: 'npx',
+          args: ['-y', 'google-workspace-mcp', 'serve'],
+        },
+        paper_search: {
+          command: 'npx',
+          args: ['-y', 'paper-search-mcp-nodejs'],
         },
       },
       hooks: {

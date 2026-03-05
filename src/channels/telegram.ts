@@ -180,6 +180,29 @@ export class TelegramChannel implements Channel {
       return next();
     });
 
+    // /start — welcome message
+    this.bot.command('start', (ctx) => {
+      ctx.reply(
+        `Hello! I'm ${ASSISTANT_NAME}, your personal AI assistant.\n\n` +
+        `Mention me with @${ASSISTANT_NAME} followed by your message to chat.\n` +
+        `Use /help to see all available commands.`,
+      );
+    });
+
+    // /help — list available commands
+    this.bot.command('help', (ctx) => {
+      ctx.reply(
+        `*Available Commands:*\n\n` +
+        `/start - Welcome message\n` +
+        `/help - Show this help\n` +
+        `/ping - Check if I'm online\n` +
+        `/chatid - Get this chat's registration ID\n` +
+        `/status - Show bot status\n\n` +
+        `*To chat:* Mention @${ASSISTANT_NAME} followed by your message.`,
+        { parse_mode: 'Markdown' },
+      );
+    });
+
     // Command to get chat ID (useful for registration)
     this.bot.command('chatid', (ctx) => {
       const chatId = ctx.chat.id;
@@ -198,6 +221,22 @@ export class TelegramChannel implements Channel {
     // Command to check bot status
     this.bot.command('ping', (ctx) => {
       ctx.reply(`${ASSISTANT_NAME} is online.`);
+    });
+
+    // /status — show bot status
+    this.bot.command('status', (ctx) => {
+      const groups = this.opts.registeredGroups();
+      const groupCount = Object.keys(groups).length;
+      const uptime = process.uptime();
+      const hours = Math.floor(uptime / 3600);
+      const minutes = Math.floor((uptime % 3600) / 60);
+      ctx.reply(
+        `*${ASSISTANT_NAME} Status*\n\n` +
+        `Status: Online\n` +
+        `Uptime: ${hours}h ${minutes}m\n` +
+        `Registered groups: ${groupCount}`,
+        { parse_mode: 'Markdown' },
+      );
     });
 
     this.bot.on('message:text', async (ctx) => {
@@ -400,6 +439,16 @@ export class TelegramChannel implements Channel {
           console.log(
             `  Send /chatid to the bot to get a chat's registration ID\n`,
           );
+
+          // Register commands with BotFather so they appear in the "/" menu
+          this.bot!.api.setMyCommands([
+            { command: 'start', description: 'Welcome message and usage instructions' },
+            { command: 'help', description: 'Show available commands' },
+            { command: 'ping', description: 'Check if bot is online' },
+            { command: 'chatid', description: 'Get chat registration ID' },
+            { command: 'status', description: 'Show bot status' },
+          ]).catch(err => logger.warn({ err }, 'Failed to set bot commands'));
+
           resolve();
         },
       });

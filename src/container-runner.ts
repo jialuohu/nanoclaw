@@ -2,7 +2,7 @@
  * Container Runner for NanoClaw
  * Spawns agent execution in containers and handles IPC
  */
-import { ChildProcess, exec, spawn } from 'child_process';
+import { ChildProcess, exec, execSync, spawn } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -176,6 +176,28 @@ function buildVolumeMounts(
     });
   }
 
+  // Google Workspace (Drive/Docs/Sheets/Slides) credentials
+  // google-workspace-mcp resolves CONFIG_DIR from $HOME/.google-mcp/ at runtime,
+  // but stores absolute host paths in accounts.json (tokenPath, credentialsPath).
+  // Mount at both the container HOME path (for CONFIG_DIR resolution) and the
+  // original host path (for stored absolute tokenPath references).
+  const gworkspaceDir = path.join(homeDir, '.google-mcp');
+  if (fs.existsSync(gworkspaceDir)) {
+    mounts.push({
+      hostPath: gworkspaceDir,
+      containerPath: '/home/node/.google-mcp',
+      readonly: false, // MCP may need to refresh OAuth tokens
+    });
+    // Also mount at original host path so absolute tokenPath in accounts.json resolves
+    if (gworkspaceDir !== '/home/node/.google-mcp') {
+      mounts.push({
+        hostPath: gworkspaceDir,
+        containerPath: gworkspaceDir,
+        readonly: false,
+      });
+    }
+  }
+
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = resolveGroupIpcPath(group.folder);
@@ -243,6 +265,9 @@ function readSecrets(): Record<string, string> {
     'ANTHROPIC_AUTH_TOKEN',
     'CLAUDE_MODEL',
     'OPENAI_API_KEY',
+    'GITHUB_PERSONAL_ACCESS_TOKEN',
+    'ZOTERO_API_KEY',
+    'ZOTERO_USER_ID',
   ]);
 }
 
@@ -278,6 +303,26 @@ function buildContainerArgs(
   return args;
 }
 
+function cleanupStaleContainers(): void {
+  try {
+    for (const status of ['created', 'dead']) {
+      const result = execSync(
+        `${CONTAINER_RUNTIME_BIN} ps -a --filter "name=nanoclaw-" --filter "status=${status}" -q`,
+        { encoding: 'utf8', timeout: 5000 },
+      ).trim();
+      if (result) {
+        const ids = result.split('\n').filter(Boolean);
+        logger.info({ count: ids.length, status }, 'Cleaning up stale containers');
+        execSync(`${CONTAINER_RUNTIME_BIN} rm -f ${ids.join(' ')}`, {
+          timeout: 10000,
+        });
+      }
+    }
+  } catch {
+    // Best-effort cleanup, don't block container launch
+  }
+}
+
 export async function runContainerAgent(
   group: RegisteredGroup,
   input: ContainerInput,
@@ -285,6 +330,8 @@ export async function runContainerAgent(
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
+
+  cleanupStaleContainers();
 
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true, mode: 0o777 });
@@ -690,8 +737,11 @@ const CONFIG_SECRET_KEYS = new Set([
   'CLAUDE_CODE_OAUTH_TOKEN',
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_AUTH_TOKEN',
+  'OPENAI_API_KEY',
   'TELEGRAM_BOT_TOKEN',
   'TELEGRAM_BOT_POOL',
+  'GITHUB_PERSONAL_ACCESS_TOKEN',
+  'ZOTERO_API_KEY',
 ]);
 
 /**

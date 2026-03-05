@@ -1,0 +1,3 @@
+[submodule "star-office-ui"]
+	path = star-office-ui
+	url = https://github.com/jialuohu/Star-Office-UI.git
