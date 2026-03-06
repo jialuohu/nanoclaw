@@ -184,6 +184,8 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
+    model?: string;
+    max_thinking_tokens?: number;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -276,6 +278,8 @@ export async function processTaskIpc(
           next_run: nextRun,
           status: 'active',
           created_at: new Date().toISOString(),
+          model: data.model || null,
+          max_thinking_tokens: data.max_thinking_tokens || null,
         });
         logger.info(
           { taskId, sourceGroup, targetFolder, contextMode },

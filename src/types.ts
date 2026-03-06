@@ -66,6 +66,8 @@ export interface ScheduledTask {
   last_result: string | null;
   status: 'active' | 'paused' | 'completed';
   created_at: string;
+  model?: string | null;
+  max_thinking_tokens?: number | null;
 }
 
 export interface TaskRunLog {

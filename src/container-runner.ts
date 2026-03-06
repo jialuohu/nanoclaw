@@ -39,6 +39,8 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  model?: string;
+  maxThinkingTokens?: number;
   secrets?: Record<string, string>;
 }
 
@@ -65,15 +67,13 @@ function buildVolumeMounts(
   const groupDir = resolveGroupFolderPath(group.folder);
 
   if (isMain) {
-    // Main gets the project root read-only. Writable paths the agent needs
-    // (group folder, IPC, .claude/) are mounted separately below.
-    // Read-only prevents the agent from modifying host application code
-    // (src/, dist/, package.json, etc.) which would bypass the sandbox
-    // entirely on next restart.
+    // Main gets the project root writable so scheduled tasks (e.g. auto-update)
+    // can run git merge, npm build, etc. The main group is already fully
+    // privileged (set_config, restart_service, register_group).
     mounts.push({
       hostPath: projectRoot,
       containerPath: '/workspace/project',
-      readonly: true,
+      readonly: false,
     });
 
     // Main also gets its group folder as the working directory

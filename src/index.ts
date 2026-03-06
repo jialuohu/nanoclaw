@@ -25,6 +25,7 @@ import {
   ensureContainerRuntimeRunning,
 } from './container-runtime.js';
 import {
+  createTask,
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
@@ -32,6 +33,7 @@ import {
   getMessagesSince,
   getNewMessages,
   getRouterState,
+  getTaskById,
   initDatabase,
   setRegisteredGroup,
   setRouterState,
@@ -442,7 +444,10 @@ async function startMessageLoop(): Promise<void> {
           const formatted = formatMessages(messagesToSend);
 
           if (queue.sendMessage(chatJid, formatted)) {
-            setStarOfficeState('writing', `Processing message for ${group.name}`);
+            setStarOfficeState(
+              'writing',
+              `Processing message for ${group.name}`,
+            );
             logger.debug(
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
@@ -490,6 +495,74 @@ function recoverPendingMessages(): void {
 function ensureContainerSystemRunning(): void {
   ensureContainerRuntimeRunning();
   cleanupOrphans();
+}
+
+/** Return an ISO string for the next occurrence of HH:MM local time. */
+function nextOccurrence(hour: number, minute: number): string {
+  const now = new Date();
+  const next = new Date(now);
+  next.setHours(hour, minute, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 1);
+  return next.toISOString();
+}
+
+const AUTO_UPDATE_TASK_ID = 'task-auto-update-nanoclaw';
+const AUTO_UPDATE_PROMPT = `You are running an automated NanoClaw update check. Follow these steps exactly:
+
+1. cd /workspace/project
+2. Run: git fetch upstream --prune
+3. Check for new commits: git log HEAD..upstream/main --oneline
+4. If no new commits, exit silently (do NOT send any message).
+5. If there ARE new commits, attempt to merge:
+   a. First do a dry-run: git merge --no-commit --no-ff upstream/main
+   b. Check git status for conflicts.
+
+   IF NO CONFLICTS:
+   - git merge --abort (undo the dry-run)
+   - git merge upstream/main --no-edit (real merge)
+   - npm run build
+   - npm test
+   - If build AND tests pass: use send_message to report "✅ NanoClaw auto-updated. Commits merged: <list>. Restarting..." then use restart_service.
+   - If build OR tests fail: git reset --hard HEAD~1, then use send_message to report "❌ NanoClaw auto-update failed (build/test error). Rolled back. Please run /update-nanoclaw manually." Include the error output.
+
+   IF CONFLICTS:
+   - Count conflicting files from git status.
+   - If 3 or fewer files: attempt to resolve conflict markers (preserve local customizations, incorporate upstream fixes). Then git add, git commit --no-edit, npm run build, npm test.
+     - If everything passes: send_message success + restart_service.
+     - If fails: git merge --abort, send_message failure notification.
+   - If more than 3 files conflict: git merge --abort, use send_message to report "⚠️ NanoClaw upstream has updates with <N> conflicting files. Please run /update-nanoclaw manually." List the conflicting files.
+
+IMPORTANT: Always use the send_message MCP tool to communicate results. Do NOT just print output.
+IMPORTANT: If there are no upstream changes, do NOT send any message — exit quietly.`;
+
+function seedAutoUpdateTask(
+  groups: Record<string, RegisteredGroup>,
+): void {
+  if (getTaskById(AUTO_UPDATE_TASK_ID)) return; // already exists
+
+  // Find the main group's chat JID for sending notifications
+  const mainEntry = Object.entries(groups).find(([, g]) => g.isMain === true);
+  if (!mainEntry) {
+    logger.warn('No main group registered yet, skipping auto-update task seed');
+    return;
+  }
+  const [mainJid, mainGroup] = mainEntry;
+
+  createTask({
+    id: AUTO_UPDATE_TASK_ID,
+    group_folder: mainGroup.folder,
+    chat_jid: mainJid,
+    prompt: AUTO_UPDATE_PROMPT,
+    schedule_type: 'cron',
+    schedule_value: '0 3 * * *', // daily at 3 AM
+    context_mode: 'isolated',
+    next_run: nextOccurrence(3, 0),
+    status: 'active',
+    created_at: new Date().toISOString(),
+    model: 'claude-opus-4-6',
+    max_thinking_tokens: 10000,
+  });
+  logger.info('Seeded auto-update scheduled task (daily 3 AM)');
 }
 
 async function main(): Promise<void> {
@@ -555,7 +628,10 @@ async function main(): Promise<void> {
     try {
       await channel.connect();
     } catch (err) {
-      logger.error({ channel: channelName, err }, 'Channel failed to connect — skipping');
+      logger.error(
+        { channel: channelName, err },
+        'Channel failed to connect — skipping',
+      );
       continue;
     }
     channels.push(channel);
@@ -587,6 +663,7 @@ async function main(): Promise<void> {
       if (text) await channel.sendMessage(jid, text);
     },
   });
+  seedAutoUpdateTask(registeredGroups);
   startIpcWatcher({
     sendMessage: (jid, text) => {
       const channel = findChannel(channels, jid);

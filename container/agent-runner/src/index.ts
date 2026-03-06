@@ -414,8 +414,8 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
-  // Read model from environment (set via CLAUDE_MODEL in .env)
-  const claudeModel = sdkEnv.CLAUDE_MODEL || undefined;
+  // Model override: per-task model > CLAUDE_MODEL env var
+  const claudeModel = containerInput.model || sdkEnv.CLAUDE_MODEL || undefined;
   if (claudeModel) {
     log(`Using model: ${claudeModel}`);
   }
@@ -425,7 +425,7 @@ async function runQuery(
     options: {
       cwd: '/workspace/group',
       model: claudeModel,
-      maxThinkingTokens: 0,
+      maxThinkingTokens: containerInput.maxThinkingTokens ?? 0,
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,

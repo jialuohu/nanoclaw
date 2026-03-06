@@ -179,6 +179,8 @@ async function runTask(
         isMain,
         isScheduledTask: true,
         assistantName: ASSISTANT_NAME,
+        model: task.model || undefined,
+        maxThinkingTokens: task.max_thinking_tokens || undefined,
       },
       (proc, containerName) =>
         deps.onProcess(task.chat_jid, proc, containerName, task.group_folder),

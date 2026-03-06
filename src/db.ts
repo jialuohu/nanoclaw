@@ -93,6 +93,22 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add model and max_thinking_tokens columns for per-task overrides
+  try {
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN model TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(
+      `ALTER TABLE scheduled_tasks ADD COLUMN max_thinking_tokens INTEGER`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
   // Add is_bot_message column if it doesn't exist (migration for existing DBs)
   try {
     database.exec(
@@ -363,8 +379,8 @@ export function createTask(
 ): void {
   db.prepare(
     `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at, model, max_thinking_tokens)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
   ).run(
     task.id,
@@ -377,6 +393,8 @@ export function createTask(
     task.next_run,
     task.status,
     task.created_at,
+    task.model || null,
+    task.max_thinking_tokens || null,
   );
 }
 
