@@ -535,9 +535,7 @@ const AUTO_UPDATE_PROMPT = `You are running an automated NanoClaw update check. 
 IMPORTANT: Always use the send_message MCP tool to communicate results. Do NOT just print output.
 IMPORTANT: If there are no upstream changes, do NOT send any message — exit quietly.`;
 
-function seedAutoUpdateTask(
-  groups: Record<string, RegisteredGroup>,
-): void {
+function seedAutoUpdateTask(groups: Record<string, RegisteredGroup>): void {
   if (getTaskById(AUTO_UPDATE_TASK_ID)) return; // already exists
 
   // Find the main group's chat JID for sending notifications

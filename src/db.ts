@@ -95,9 +95,7 @@ function createSchema(database: Database.Database): void {
 
   // Add model and max_thinking_tokens columns for per-task overrides
   try {
-    database.exec(
-      `ALTER TABLE scheduled_tasks ADD COLUMN model TEXT`,
-    );
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN model TEXT`);
   } catch {
     /* column already exists */
   }
