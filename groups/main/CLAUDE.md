@@ -16,9 +16,29 @@ The user prefers seeing incremental updates over waiting for a single complete a
 
 When you spawn sub-agents (agent teams), instruct each sub-agent to use `send_message` with a `sender` parameter matching their role (e.g., "Researcher", "Analyst") to post their progress, findings, and discussions directly to the chat. This makes the team conversation visible to the user — they should see the sub-agents actively collaborating, not just a final summary from you. Each sub-agent gets its own bot identity in Telegram.
 
-## Email Notifications
+## Email Triage
 
-When you receive an email notification (messages starting with `[Email from ...`), inform the user about it but do NOT reply to the email unless specifically asked. You have Gmail tools available — use them only when the user explicitly asks you to reply, forward, or take action on an email.
+When you receive email notifications (messages starting with `[Email from ...`), you are the triage agent. Classify each email and act accordingly:
+
+**Immediate** — personal emails that need attention (from real people: colleagues, friends, family, professors, recruiters with specific opportunities, service providers with account-specific matters):
+- Notify the user via `send_message` with a brief summary
+- Do NOT reply to the email unless the user specifically asks
+
+**Digest** — newsletters, news, events, automated notifications, GitHub notifications, marketing from known services:
+- Do NOT notify the user
+- Append to the digest queue file at `/workspace/group/email-digest-queue.json` as a JSON array entry:
+  ```json
+  {"account": "sender-account@gmail.com", "sender": "sender@example.com", "senderName": "Name", "subject": "Subject line", "snippet": "First 200 chars...", "timestamp": "ISO timestamp"}
+  ```
+- Stay silent (no `send_message`)
+
+**Drop** — spam, cold outreach, generic promotions, unsolicited ads, phishing:
+- Ignore completely — no notification, no digest entry
+- Stay silent (no `send_message`)
+
+When multiple emails arrive in a batch, process all of them and send ONE combined notification for the important ones (if any). If no emails in the batch are important, stay silent.
+
+A daily digest task runs at 9 PM to summarize the digest queue and send it to you.
 
 ## Group Chats
 

@@ -563,6 +563,100 @@ function seedAutoUpdateTask(groups: Record<string, RegisteredGroup>): void {
   logger.info('Seeded auto-update scheduled task (daily 3 AM)');
 }
 
+const BACKUP_TASK_ID = 'task-daily-backup-gdrive';
+const BACKUP_PROMPT = `You are running an automated daily backup of the NanoClaw project directory. Follow these steps exactly:
+
+1. cd /workspace/project
+2. Create a timestamped backup archive:
+   DATE=$(date +%Y-%m-%d)
+   tar czf /tmp/nanoclaw-backup-$DATE.tar.gz --exclude=node_modules --exclude=dist .
+3. Get the file size for reporting:
+   BACKUP_SIZE=$(du -h /tmp/nanoclaw-backup-$DATE.tar.gz | cut -f1)
+4. Upload the backup to Google Drive folder "nanoclaw/":
+   a. Use the google_workspace MCP tools to find or create a folder named "nanoclaw" on Google Drive.
+   b. Upload /tmp/nanoclaw-backup-$DATE.tar.gz into that folder.
+5. After a successful upload:
+   - Use send_message to report: "Backup complete: nanoclaw-backup-$DATE.tar.gz ($BACKUP_SIZE) uploaded to Google Drive nanoclaw/"
+6. If any step fails:
+   - Use send_message to report the error with details.
+7. Clean up the local temp file:
+   rm -f /tmp/nanoclaw-backup-*.tar.gz
+
+IMPORTANT: Always use the send_message MCP tool to communicate results. Do NOT just print output.
+IMPORTANT: Always clean up /tmp after upload, whether it succeeded or failed.`;
+
+function seedBackupTask(groups: Record<string, RegisteredGroup>): void {
+  if (getTaskById(BACKUP_TASK_ID)) return;
+
+  const mainEntry = Object.entries(groups).find(([, g]) => g.isMain === true);
+  if (!mainEntry) {
+    logger.warn('No main group registered yet, skipping backup task seed');
+    return;
+  }
+  const [mainJid, mainGroup] = mainEntry;
+
+  createTask({
+    id: BACKUP_TASK_ID,
+    group_folder: mainGroup.folder,
+    chat_jid: mainJid,
+    prompt: BACKUP_PROMPT,
+    schedule_type: 'cron',
+    schedule_value: '0 2 * * *',
+    context_mode: 'isolated',
+    next_run: nextOccurrence(2, 0),
+    status: 'active',
+    created_at: new Date().toISOString(),
+    model: 'claude-sonnet-4-6',
+    max_thinking_tokens: 10000,
+  });
+  logger.info('Seeded backup scheduled task (daily 2 AM)');
+}
+
+const EMAIL_DIGEST_TASK_ID = 'task-daily-email-digest';
+const EMAIL_DIGEST_PROMPT = `You are running an automated daily email digest. Follow these steps:
+
+1. Atomically grab the digest queue to avoid losing emails that arrive during processing:
+   mv /workspace/group/email-digest-queue.json /workspace/group/email-digest-queue.processing.json 2>/dev/null
+   - If the mv fails (file missing), exit silently — no digest to send.
+2. Read /workspace/group/email-digest-queue.processing.json
+   - If it contains an empty array [] or is empty, remove the file and exit silently.
+3. Parse the JSON array of email entries. Each entry has: account, sender, senderName, subject, snippet, timestamp.
+4. Summarize ALL entries into one concise paragraph (2-4 sentences). Group by topic or theme when possible. Mention sender names and subjects for the most notable items.
+5. Send the summary using send_message with format:
+   "Daily Email Digest:\\n\\n<your summary paragraph>\\n\\nTotal: <count> emails from <unique sender count> senders."
+6. Clean up:
+   rm -f /workspace/group/email-digest-queue.processing.json
+
+IMPORTANT: Always use the send_message MCP tool to communicate. Do NOT just print output.
+IMPORTANT: If the queue is empty or missing, do nothing — no message, no error.`;
+
+function seedEmailDigestTask(groups: Record<string, RegisteredGroup>): void {
+  if (getTaskById(EMAIL_DIGEST_TASK_ID)) return;
+
+  const mainEntry = Object.entries(groups).find(([, g]) => g.isMain === true);
+  if (!mainEntry) {
+    logger.warn('No main group registered yet, skipping email digest task seed');
+    return;
+  }
+  const [mainJid, mainGroup] = mainEntry;
+
+  createTask({
+    id: EMAIL_DIGEST_TASK_ID,
+    group_folder: mainGroup.folder,
+    chat_jid: mainJid,
+    prompt: EMAIL_DIGEST_PROMPT,
+    schedule_type: 'cron',
+    schedule_value: '0 21 * * *',
+    context_mode: 'isolated',
+    next_run: nextOccurrence(21, 0),
+    status: 'active',
+    created_at: new Date().toISOString(),
+    model: 'claude-sonnet-4-6',
+    max_thinking_tokens: 10000,
+  });
+  logger.info('Seeded email digest scheduled task (daily 9 PM)');
+}
+
 async function main(): Promise<void> {
   ensureContainerSystemRunning();
   initDatabase();
@@ -662,6 +756,8 @@ async function main(): Promise<void> {
     },
   });
   seedAutoUpdateTask(registeredGroups);
+  seedBackupTask(registeredGroups);
+  seedEmailDigestTask(registeredGroups);
   startIpcWatcher({
     sendMessage: (jid, text) => {
       const channel = findChannel(channels, jid);

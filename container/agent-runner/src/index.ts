@@ -19,6 +19,49 @@ import path from 'path';
 import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
+const GMAIL_MCP_CMD = '@gongrzhe/server-gmail-autoauth-mcp';
+const GMAIL_BASE_DIR = path.join(process.env.HOME || '/home/node', '.gmail-mcp');
+
+function discoverGmailMcpServers(): {
+  servers: Record<string, { command: string; args: string[]; env?: Record<string, string> }>;
+  toolPatterns: string[];
+} {
+  const servers: Record<string, { command: string; args: string[]; env?: Record<string, string> }> = {};
+  const toolPatterns: string[] = [];
+
+  const hasCredentials = (dir: string) =>
+    fs.existsSync(path.join(dir, 'gcp-oauth.keys.json')) &&
+    fs.existsSync(path.join(dir, 'credentials.json'));
+
+  // Default account (root ~/.gmail-mcp/)
+  if (hasCredentials(GMAIL_BASE_DIR)) {
+    servers.gmail = { command: 'npx', args: ['-y', GMAIL_MCP_CMD] };
+    toolPatterns.push('mcp__gmail__*');
+  }
+
+  // Additional accounts in ~/.gmail-mcp/accounts/*/
+  const accountsDir = path.join(GMAIL_BASE_DIR, 'accounts');
+  if (fs.existsSync(accountsDir)) {
+    for (const entry of fs.readdirSync(accountsDir).sort()) {
+      const fullPath = path.join(accountsDir, entry);
+      if (fs.statSync(fullPath).isDirectory() && hasCredentials(fullPath)) {
+        const name = `gmail_${entry}`;
+        servers[name] = {
+          command: 'npx',
+          args: ['-y', GMAIL_MCP_CMD],
+          env: {
+            GMAIL_OAUTH_PATH: path.join(fullPath, 'gcp-oauth.keys.json'),
+            GMAIL_CREDENTIALS_PATH: path.join(fullPath, 'credentials.json'),
+          },
+        };
+        toolPatterns.push(`mcp__${name}__*`);
+      }
+    }
+  }
+
+  return { servers, toolPatterns };
+}
+
 interface ContainerInput {
   prompt: string;
   sessionId?: string;
@@ -28,6 +71,8 @@ interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   secrets?: Record<string, string>;
+  model?: string;
+  maxThinkingTokens?: number;
 }
 
 interface ContainerOutput {
@@ -420,6 +465,12 @@ async function runQuery(
     log(`Using model: ${claudeModel}`);
   }
 
+  // Discover Gmail accounts for MCP servers
+  const gmailMcp = discoverGmailMcpServers();
+  if (Object.keys(gmailMcp.servers).length > 0) {
+    log(`Gmail MCP accounts: ${Object.keys(gmailMcp.servers).join(', ')}`);
+  }
+
   for await (const message of query({
     prompt: stream,
     options: {
@@ -441,7 +492,7 @@ async function runQuery(
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
         'mcp__nanoclaw__*',
-        'mcp__gmail__*',
+        ...gmailMcp.toolPatterns,
         'mcp__google_calendar__*',
         'mcp__github__*',
         'mcp__zotero__*',
@@ -462,10 +513,7 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
-        gmail: {
-          command: 'npx',
-          args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
-        },
+        ...gmailMcp.servers,
         google_calendar: {
           command: 'npx',
           args: ['-y', '@gongrzhe/server-calendar-autoauth-mcp'],
