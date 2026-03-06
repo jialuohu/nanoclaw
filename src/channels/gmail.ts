@@ -43,10 +43,7 @@ export interface DigestEntry {
 
 export type EmailClassification = 'immediate' | 'digest';
 
-const DIGEST_LABELS = new Set([
-  'CATEGORY_UPDATES',
-  'CATEGORY_SOCIAL',
-]);
+const DIGEST_LABELS = new Set(['CATEGORY_UPDATES', 'CATEGORY_SOCIAL']);
 
 // --- Utility functions (exported for testing) ---
 
@@ -108,7 +105,10 @@ export function classifyEmail(labelIds: string[]): EmailClassification {
   return 'immediate';
 }
 
-export function appendToDigestQueue(filePath: string, entry: DigestEntry): void {
+export function appendToDigestQueue(
+  filePath: string,
+  entry: DigestEntry,
+): void {
   let queue: DigestEntry[] = [];
   try {
     if (fs.existsSync(filePath)) {
@@ -121,7 +121,10 @@ export function appendToDigestQueue(filePath: string, entry: DigestEntry): void 
   queue.push(entry);
   if (queue.length > 200) {
     const dropped = queue.length - 200;
-    logger.warn({ filePath, dropped }, 'Digest queue overflow, dropping oldest entries');
+    logger.warn(
+      { filePath, dropped },
+      'Digest queue overflow, dropping oldest entries',
+    );
     queue = queue.slice(queue.length - 200);
   }
   fs.writeFileSync(filePath, JSON.stringify(queue, null, 2));
@@ -349,18 +352,13 @@ class GmailAccount {
       this.consecutiveErrors = 0;
     } catch (err) {
       this.consecutiveErrors++;
-      const backoffMs = Math.min(
-        this.pollIntervalMs * Math.pow(2, this.consecutiveErrors),
-        30 * 60 * 1000,
-      );
       logger.error(
         {
           account: this.accountName,
           err,
           consecutiveErrors: this.consecutiveErrors,
-          nextPollMs: backoffMs,
         },
-        'Gmail poll failed',
+        'Gmail poll failed, backing off',
       );
     }
   }
@@ -378,15 +376,29 @@ class GmailAccount {
 
     for (const stub of messages) {
       if (!stub.id || this.processedIds.has(stub.id)) continue;
-      this.processedIds.add(stub.id);
 
-      await this.processMessage(stub.id);
+      try {
+        await this.processMessage(stub.id);
+        this.processedIds.add(stub.id);
+      } catch (err) {
+        // Don't add to processedIds so the message is retried next cycle
+        logger.error(
+          { account: this.accountName, messageId: stub.id, err },
+          'Failed to process Gmail message, will retry',
+        );
+      }
     }
 
     // Cap processed ID set to prevent unbounded growth
     if (this.processedIds.size > 5000) {
       const ids = [...this.processedIds];
       this.processedIds = new Set(ids.slice(ids.length - 2500));
+    }
+
+    // Cap thread metadata to prevent unbounded memory growth
+    if (this.threadMeta.size > 2000) {
+      const entries = [...this.threadMeta.entries()];
+      this.threadMeta = new Map(entries.slice(entries.length - 1000));
     }
   }
 
@@ -422,8 +434,7 @@ class GmailAccount {
     if (senderEmail === this.userEmail) return;
 
     // Extract body text; fall back to Gmail snippet for HTML-only emails
-    const body =
-      extractTextBody(msg.data.payload) || msg.data.snippet || '';
+    const body = extractTextBody(msg.data.payload) || msg.data.snippet || '';
 
     // Classify: Updates/Social → digest; Primary → agent triage
     const classification = classifyEmail(labelIds);

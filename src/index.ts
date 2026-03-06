@@ -635,7 +635,9 @@ function seedEmailDigestTask(groups: Record<string, RegisteredGroup>): void {
 
   const mainEntry = Object.entries(groups).find(([, g]) => g.isMain === true);
   if (!mainEntry) {
-    logger.warn('No main group registered yet, skipping email digest task seed');
+    logger.warn(
+      'No main group registered yet, skipping email digest task seed',
+    );
     return;
   }
   const [mainJid, mainGroup] = mainEntry;
