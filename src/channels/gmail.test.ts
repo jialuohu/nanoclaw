@@ -43,7 +43,7 @@ import {
   parseGmailJid,
   discoverAccounts,
   hasCredentials,
-  classifyEmail,
+  getCategoryHint,
   extractTextBody,
   appendToDigestQueue,
   DigestEntry,
@@ -233,41 +233,41 @@ describe('discoverAccounts', () => {
   });
 });
 
-describe('classifyEmail', () => {
-  it('returns digest for CATEGORY_UPDATES label', () => {
-    expect(classifyEmail(['INBOX', 'CATEGORY_UPDATES'])).toBe('digest');
+describe('getCategoryHint', () => {
+  it('returns Primary for CATEGORY_PRIMARY', () => {
+    expect(getCategoryHint(['INBOX', 'CATEGORY_PRIMARY'])).toBe('Primary');
   });
 
-  it('returns digest for CATEGORY_SOCIAL label', () => {
-    expect(classifyEmail(['INBOX', 'CATEGORY_SOCIAL'])).toBe('digest');
+  it('returns Updates for CATEGORY_UPDATES', () => {
+    expect(getCategoryHint(['INBOX', 'CATEGORY_UPDATES'])).toBe('Updates');
   });
 
-  it('returns immediate for CATEGORY_PRIMARY label', () => {
-    expect(classifyEmail(['INBOX', 'CATEGORY_PRIMARY'])).toBe('immediate');
+  it('returns Social for CATEGORY_SOCIAL', () => {
+    expect(getCategoryHint(['INBOX', 'CATEGORY_SOCIAL'])).toBe('Social');
   });
 
-  it('returns immediate for INBOX-only labels', () => {
-    expect(classifyEmail(['INBOX'])).toBe('immediate');
-  });
-
-  it('returns digest when both Updates and Primary labels present', () => {
-    expect(
-      classifyEmail(['INBOX', 'CATEGORY_PRIMARY', 'CATEGORY_UPDATES']),
-    ).toBe('digest');
-  });
-
-  it('returns digest when both Updates and Social present', () => {
-    expect(classifyEmail(['CATEGORY_UPDATES', 'CATEGORY_SOCIAL'])).toBe(
-      'digest',
+  it('returns Promotions for CATEGORY_PROMOTIONS', () => {
+    expect(getCategoryHint(['INBOX', 'CATEGORY_PROMOTIONS'])).toBe(
+      'Promotions',
     );
   });
 
-  it('returns immediate for empty label array', () => {
-    expect(classifyEmail([])).toBe('immediate');
+  it('returns Forums for CATEGORY_FORUMS', () => {
+    expect(getCategoryHint(['INBOX', 'CATEGORY_FORUMS'])).toBe('Forums');
   });
 
-  it('returns immediate for unknown labels only', () => {
-    expect(classifyEmail(['STARRED', 'IMPORTANT'])).toBe('immediate');
+  it('returns null for no category labels', () => {
+    expect(getCategoryHint(['INBOX'])).toBeNull();
+  });
+
+  it('returns null for empty label array', () => {
+    expect(getCategoryHint([])).toBeNull();
+  });
+
+  it('returns first matching category when multiple present', () => {
+    expect(getCategoryHint(['CATEGORY_UPDATES', 'CATEGORY_SOCIAL'])).toBe(
+      'Updates',
+    );
   });
 });
 
@@ -491,15 +491,14 @@ describe('Gmail polling (integration)', () => {
     const call = onMessage.mock.calls[0];
     expect(call[0]).toBe('tg:main');
     expect(call[1].content).toContain('[Email from Alice');
+    expect(call[1].content).toContain('| Gmail: Primary');
     expect(call[1].content).toContain('Subject: Hello');
   });
 
-  it('queues updates/social emails for digest instead of delivering', async () => {
-    // First list call (primary) → empty
-    // Second list call (updates/social) → one message
-    mockMessagesList
-      .mockResolvedValueOnce({ data: { messages: [] } })
-      .mockResolvedValueOnce({ data: { messages: [{ id: 'msg-social' }] } });
+  it('delivers updates/social emails to agent with category hint', async () => {
+    mockMessagesList.mockResolvedValueOnce({
+      data: { messages: [{ id: 'msg-social' }] },
+    });
     mockMessagesGet.mockResolvedValue(
       makeGmailMessage('msg-social', {
         from: 'LinkedIn <noreply@linkedin.com>',
@@ -508,15 +507,17 @@ describe('Gmail polling (integration)', () => {
       }),
     );
 
-    const digestDir = path.join(tmpHome, 'groups', 'main');
-    fs.mkdirSync(digestDir, { recursive: true });
-    // Override mainGroup folder to use our temp dir
-    const ch = makeChannel({ folder: path.relative('groups', digestDir) });
+    const ch = makeChannel();
     await ch.connect();
     await ch.disconnect();
 
-    // Should NOT deliver to main group
-    expect(onMessage).not.toHaveBeenCalled();
+    // Agent now sees ALL emails — it decides what's digest/drop
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    const call = onMessage.mock.calls[0];
+    expect(call[0]).toBe('tg:main');
+    expect(call[1].content).toContain('LinkedIn');
+    expect(call[1].content).toContain('| Gmail: Social');
+    expect(call[1].content).toContain('Subject: New connections');
   });
 
   it('continues processing remaining messages when one fails', async () => {
@@ -559,9 +560,7 @@ describe('Gmail polling (integration)', () => {
       data: { messages: [{ id: 'msg1' }, { id: 'msg2' }] },
     });
     mockMessagesGet.mockImplementation(({ id }: { id: string }) =>
-      Promise.resolve(
-        makeGmailMessage(id, { subject: `Subject ${id}` }),
-      ),
+      Promise.resolve(makeGmailMessage(id, { subject: `Subject ${id}` })),
     );
 
     const ch = makeChannel();
@@ -655,14 +654,12 @@ describe('Gmail polling (integration)', () => {
       .mockResolvedValueOnce({ data: { emailAddress: 'user@gmail.com' } })
       .mockResolvedValueOnce({ data: { emailAddress: 'work@company.com' } });
 
-    // Only second account has messages
+    // Only second account has messages (one poll query per account)
     mockMessagesList
-      .mockResolvedValueOnce({ data: { messages: [] } }) // default primary
-      .mockResolvedValueOnce({ data: { messages: [] } }) // default updates
+      .mockResolvedValueOnce({ data: { messages: [] } }) // default
       .mockResolvedValueOnce({
         data: { messages: [{ id: 'work-msg' }] },
-      }) // work primary
-      .mockResolvedValueOnce({ data: { messages: [] } }); // work updates
+      }); // work
 
     mockMessagesGet.mockResolvedValue(
       makeGmailMessage('work-msg', { subject: 'Work email' }),

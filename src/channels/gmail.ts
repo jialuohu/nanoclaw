@@ -41,9 +41,13 @@ export interface DigestEntry {
   timestamp: string;
 }
 
-export type EmailClassification = 'immediate' | 'digest';
-
-const DIGEST_LABELS = new Set(['CATEGORY_UPDATES', 'CATEGORY_SOCIAL']);
+const CATEGORY_LABELS: Record<string, string> = {
+  CATEGORY_PRIMARY: 'Primary',
+  CATEGORY_UPDATES: 'Updates',
+  CATEGORY_SOCIAL: 'Social',
+  CATEGORY_PROMOTIONS: 'Promotions',
+  CATEGORY_FORUMS: 'Forums',
+};
 
 // --- Utility functions (exported for testing) ---
 
@@ -96,13 +100,13 @@ export function parseGmailJid(jid: string): {
   return { accountName: 'default', threadId: stripped };
 }
 
-export function classifyEmail(labelIds: string[]): EmailClassification {
-  // Updates/Social categories → auto-digest
-  if (labelIds.some((id) => DIGEST_LABELS.has(id))) {
-    return 'digest';
+export function getCategoryHint(labelIds: string[]): string | null {
+  for (const id of labelIds) {
+    if (id in CATEGORY_LABELS) {
+      return CATEGORY_LABELS[id];
+    }
   }
-  // Primary emails → deliver to agent; the agent (LLM) handles triage
-  return 'immediate';
+  return null;
 }
 
 export function appendToDigestQueue(
@@ -175,21 +179,18 @@ class GmailAccount {
   userEmail = '';
 
   private multiAccount: boolean;
-  private digestFilePath: string | null;
 
   constructor(
     config: AccountConfig,
     opts: GmailChannelOpts,
     pollIntervalMs: number,
     multiAccount: boolean,
-    digestFilePath: string | null,
   ) {
     this.accountName = config.name;
     this.credDir = config.credDir;
     this.opts = opts;
     this.pollIntervalMs = pollIntervalMs;
     this.multiAccount = multiAccount;
-    this.digestFilePath = digestFilePath;
   }
 
   async connect(): Promise<void> {
@@ -344,11 +345,7 @@ class GmailAccount {
     if (!this.gmail) return;
 
     try {
-      // Poll Primary emails
-      await this.pollQuery('is:unread category:primary');
-      // Poll Updates and Social for digest
-      await this.pollQuery('is:unread (category:updates OR category:social)');
-
+      await this.pollQuery('is:unread');
       this.consecutiveErrors = 0;
     } catch (err) {
       this.consecutiveErrors++;
@@ -436,10 +433,7 @@ class GmailAccount {
     // Extract body text; fall back to Gmail snippet for HTML-only emails
     const body = extractTextBody(msg.data.payload) || msg.data.snippet || '';
 
-    // Classify: Updates/Social → digest; Primary → agent triage
-    const classification = classifyEmail(labelIds);
-
-    // Mark as read regardless of classification
+    // Mark as read
     try {
       await this.gmail.users.messages.modify({
         userId: 'me',
@@ -453,26 +447,7 @@ class GmailAccount {
       );
     }
 
-    if (classification === 'digest') {
-      // Buffer for daily digest
-      if (this.digestFilePath) {
-        appendToDigestQueue(this.digestFilePath, {
-          account: this.userEmail,
-          sender: senderEmail,
-          senderName,
-          subject,
-          snippet: body.slice(0, 200),
-          timestamp,
-        });
-      }
-      logger.info(
-        { account: this.accountName, from: senderName, subject },
-        'Gmail email queued for digest',
-      );
-      return;
-    }
-
-    // Immediate delivery
+    // Deliver to agent for triage
     const chatJid = `gmail:${this.accountName}:${threadId}`;
 
     // Cache thread metadata for replies
@@ -500,7 +475,9 @@ class GmailAccount {
 
     const mainJid = mainEntry[0];
     const accountLabel = this.multiAccount ? ` (${this.userEmail})` : '';
-    const content = `[Email${accountLabel} from ${senderName} <${senderEmail}>]\nSubject: ${subject}\n\n${body}`;
+    const categoryHint = getCategoryHint(labelIds);
+    const categoryTag = categoryHint ? ` | Gmail: ${categoryHint}` : '';
+    const content = `[Email${accountLabel} from ${senderName} <${senderEmail}>${categoryTag}]\nSubject: ${subject}\n\n${body}`;
 
     this.opts.onMessage(mainJid, {
       id: messageId,
@@ -544,20 +521,12 @@ export class GmailChannel implements Channel {
 
     const multiAccount = configs.length > 1;
 
-    // Resolve digest file path from the main group folder
-    const groups = this.opts.registeredGroups();
-    const mainEntry = Object.entries(groups).find(([, g]) => g.isMain === true);
-    const digestFilePath = mainEntry
-      ? path.resolve('groups', mainEntry[1].folder, 'email-digest-queue.json')
-      : null;
-
     for (const config of configs) {
       const account = new GmailAccount(
         config,
         this.opts,
         this.pollIntervalMs,
         multiAccount,
-        digestFilePath,
       );
       try {
         await account.connect();
