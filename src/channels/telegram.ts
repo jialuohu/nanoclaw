@@ -89,8 +89,7 @@ function deliverMediaMessage(
     ctx.from?.id?.toString() ||
     'Unknown';
   const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
-  const isGroup =
-    ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+  const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
 
   opts.onChatMetadata(chatJid, timestamp, undefined, 'telegram', isGroup);
   opts.onMessage(chatJid, {
