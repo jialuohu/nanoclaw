@@ -8,6 +8,7 @@
 | Non-main groups | Untrusted | Other users may be malicious |
 | Container agents | Sandboxed | Isolated execution environment |
 | WhatsApp messages | User input | Potential prompt injection |
+| Email content | Untrusted | External input, potential prompt injection |
 
 ## Security Boundaries
 
@@ -82,6 +83,19 @@ const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
 
 > **Note:** Anthropic credentials are mounted so that Claude Code can authenticate when the agent runs. However, this means the agent itself can discover these credentials via Bash or file operations. Ideally, Claude Code would authenticate without exposing credentials to the agent's execution environment, but I couldn't figure this out. **PRs welcome** if you have ideas for credential isolation.
 
+### 6. Email Prompt Injection Defense
+
+Emails are untrusted external input with multiple defense layers:
+
+| Layer | Defense | Location |
+|-------|---------|----------|
+| 1 | Untrusted content marking | `gmail.ts` -- email content wrapped in `[SECURITY: ...]` / `[END OF UNTRUSTED EMAIL CONTENT]` boundary markers |
+| 2 | Body length limits | `gmail.ts` -- body truncated at 10,000 chars, subject at 500, sender name at 100 |
+| 3 | Content scanning | `email-sanitizer.ts` -- detects injection patterns (instruction overrides, tool invocations, data exfiltration), adds inline warnings |
+| 4 | System prompt hardening | `global/CLAUDE.md` -- explicit rules against following email instructions |
+
+**Note:** These defenses reduce risk but cannot eliminate prompt injection entirely. Container isolation remains the primary security boundary limiting blast radius.
+
 ## Privilege Comparison
 
 | Capability | Main Group | Non-Main Group |
@@ -98,10 +112,10 @@ const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                        UNTRUSTED ZONE                             │
-│  WhatsApp Messages (potentially malicious)                        │
+│  WhatsApp Messages, Emails (potentially malicious)                 │
 └────────────────────────────────┬─────────────────────────────────┘
                                  │
-                                 ▼ Trigger check, input escaping
+                                 ▼ Trigger check, input escaping, email content scanning
 ┌──────────────────────────────────────────────────────────────────┐
 │                     HOST PROCESS (TRUSTED)                        │
 │  • Message routing                                                │
