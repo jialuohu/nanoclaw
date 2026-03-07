@@ -3,15 +3,18 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   _initTestDatabase,
   _getTestDb,
+  clearAllSessions,
   createTask,
   deleteTask,
   getAllChats,
   getAllRegisteredGroups,
+  getAllSessions,
   getMessagesSince,
   getNewMessages,
   getRegisteredGroup,
   getTaskById,
   setRegisteredGroup,
+  setSession,
   storeChatMetadata,
   storeMessage,
   updateTask,
@@ -41,6 +44,30 @@ function store(overrides: {
     is_from_me: overrides.is_from_me ?? false,
   });
 }
+
+// --- Schema indexes ---
+
+describe('schema indexes', () => {
+  it('creates expected indexes after init', () => {
+    const db = _getTestDb();
+    const indexes = db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'`,
+      )
+      .all() as Array<{ name: string }>;
+    const names = indexes.map((r) => r.name);
+
+    expect(names).toContain('idx_timestamp');
+    expect(names).toContain('idx_chat_jid_timestamp');
+    expect(names).toContain('idx_embedded_at');
+    expect(names).toContain('idx_task_status_next_run');
+    expect(names).toContain('idx_task_run_logs');
+
+    // Old individual indexes should not exist
+    expect(names).not.toContain('idx_next_run');
+    expect(names).not.toContain('idx_status');
+  });
+});
 
 // --- storeMessage (NewMessage format) ---
 
@@ -424,6 +451,19 @@ describe('registered group isMain', () => {
     const group = groups['group@g.us'];
     expect(group).toBeDefined();
     expect(group.isMain).toBeUndefined();
+  });
+});
+
+// --- clearAllSessions ---
+
+describe('clearAllSessions', () => {
+  it('removes all sessions from the database', () => {
+    setSession('group_a', 'session-1');
+    setSession('group_b', 'session-2');
+    expect(Object.keys(getAllSessions())).toHaveLength(2);
+
+    clearAllSessions();
+    expect(getAllSessions()).toEqual({});
   });
 });
 

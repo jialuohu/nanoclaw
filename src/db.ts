@@ -36,6 +36,7 @@ function createSchema(database: Database.Database): void {
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
     );
     CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_chat_jid_timestamp ON messages(chat_jid, timestamp);
 
     CREATE TABLE IF NOT EXISTS scheduled_tasks (
       id TEXT PRIMARY KEY,
@@ -50,8 +51,7 @@ function createSchema(database: Database.Database): void {
       status TEXT DEFAULT 'active',
       created_at TEXT NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS idx_next_run ON scheduled_tasks(next_run);
-    CREATE INDEX IF NOT EXISTS idx_status ON scheduled_tasks(status);
+    CREATE INDEX IF NOT EXISTS idx_task_status_next_run ON scheduled_tasks(status, next_run);
 
     CREATE TABLE IF NOT EXISTS task_run_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -156,12 +156,14 @@ function createSchema(database: Database.Database): void {
 
   // Add embedded_at column for semantic search embedding tracking
   try {
-    database.exec(
-      `ALTER TABLE messages ADD COLUMN embedded_at TEXT`,
-    );
+    database.exec(`ALTER TABLE messages ADD COLUMN embedded_at TEXT`);
   } catch {
     /* column already exists */
   }
+
+  database.exec(
+    `CREATE INDEX IF NOT EXISTS idx_embedded_at ON messages(embedded_at) WHERE embedded_at IS NULL`,
+  );
 }
 
 export function initDatabase(): void {
@@ -169,6 +171,10 @@ export function initDatabase(): void {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
   db = new Database(dbPath);
+  db.pragma('journal_mode = WAL');
+  db.pragma('synchronous = NORMAL');
+  db.pragma('cache_size = 5000');
+  db.pragma('temp_store = MEMORY');
   createSchema(db);
 
   // Migrate from JSON files if they exist
@@ -544,6 +550,10 @@ export function setSession(groupFolder: string, sessionId: string): void {
   db.prepare(
     'INSERT OR REPLACE INTO sessions (group_folder, session_id) VALUES (?, ?)',
   ).run(groupFolder, sessionId);
+}
+
+export function clearAllSessions(): void {
+  db.prepare('DELETE FROM sessions').run();
 }
 
 export function getAllSessions(): Record<string, string> {

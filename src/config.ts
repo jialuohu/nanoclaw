@@ -12,6 +12,9 @@ const envConfig = readEnvFile([
   'TELEGRAM_BOT_POOL',
   'QDRANT_URL',
   'SEMANTIC_SEARCH',
+  'AUTO_MEMORY_EXTRACTION',
+  'AGENT_SELF_EVAL',
+  'SESSION_RESET_HOUR',
 ]);
 
 export const ASSISTANT_NAME =
@@ -84,7 +87,22 @@ export const TELEGRAM_BOT_POOL = (
 export const QDRANT_URL =
   process.env.QDRANT_URL || envConfig.QDRANT_URL || 'http://localhost:6333';
 export const SEMANTIC_SEARCH_ENABLED =
-  (process.env.SEMANTIC_SEARCH || envConfig.SEMANTIC_SEARCH || 'true') !== 'false';
+  (process.env.SEMANTIC_SEARCH || envConfig.SEMANTIC_SEARCH || 'true') !==
+  'false';
+
+export const AUTO_MEMORY_EXTRACTION =
+  (process.env.AUTO_MEMORY_EXTRACTION ||
+    envConfig.AUTO_MEMORY_EXTRACTION ||
+    'true') !== 'false';
+
+export const AGENT_SELF_EVAL =
+  (process.env.AGENT_SELF_EVAL || envConfig.AGENT_SELF_EVAL || 'false') !==
+  'false';
+
+export const SESSION_RESET_HOUR = parseInt(
+  process.env.SESSION_RESET_HOUR || envConfig.SESSION_RESET_HOUR || '5',
+  10,
+);
 
 // Timezone for scheduled tasks (cron expressions, etc.)
 // Uses system timezone by default

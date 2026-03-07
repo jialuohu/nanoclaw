@@ -2,12 +2,15 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  AGENT_SELF_EVAL,
   ASSISTANT_NAME,
+  AUTO_MEMORY_EXTRACTION,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
   QDRANT_URL,
   QDRANT_STORAGE_DIR,
   SEMANTIC_SEARCH_ENABLED,
+  SESSION_RESET_HOUR,
   TELEGRAM_BOT_POOL,
   TRIGGER_PATTERN,
 } from './config.js';
@@ -33,6 +36,7 @@ import {
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
+  clearAllSessions,
   getMessagesSince,
   getNewMessages,
   getRouterState,
@@ -48,6 +52,8 @@ import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { initBotPool } from './channels/telegram.js';
 import { startIpcWatcher } from './ipc.js';
+import { tryExtractMemories } from './memory-extractor.js';
+import { tryEvaluateConversation } from './self-eval.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   isSenderAllowed,
@@ -74,6 +80,8 @@ let messageLoopRunning = false;
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
+let vectorStore: VectorStore | undefined;
+let sessionResetTimer: ReturnType<typeof setTimeout> | undefined;
 
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
@@ -184,6 +192,32 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const prompt = formatMessages(missedMessages);
 
+  // Retrieve semantically related past messages for context
+  let contextPrefix = '';
+  if (vectorStore && missedMessages.length > 0) {
+    try {
+      const queryText = missedMessages
+        .map((m) => m.content)
+        .join(' ')
+        .slice(0, 500);
+      const queryVector = await embed(queryText);
+      const results = await vectorStore.search(queryVector, chatJid, 5);
+      const cutoff = Date.now() - 5 * 60 * 1000;
+      const relevant = results.filter(
+        (r) => r.score >= 0.35 && new Date(r.timestamp).getTime() < cutoff,
+      );
+      if (relevant.length > 0) {
+        const lines = relevant.map(
+          (r) => `[${r.sender}] (${r.timestamp}): ${r.content.slice(0, 300)}`,
+        );
+        contextPrefix = `<context type="related_history" note="Past messages semantically related to the current conversation. Use as background — do not repeat or reference these unless relevant.">\n${lines.join('\n')}\n</context>\n\n`;
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Failed to retrieve semantic context');
+    }
+  }
+  const fullPrompt = contextPrefix + prompt;
+
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
   const previousCursor = lastAgentTimestamp[chatJid] || '';
@@ -214,7 +248,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
+  const output = await runAgent(group, fullPrompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
     if (result.result) {
       const raw =
@@ -263,6 +297,14 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       'Agent error, rolled back message cursor for retry',
     );
     return false;
+  }
+
+  if (AUTO_MEMORY_EXTRACTION) {
+    tryExtractMemories(group.folder, group.name, missedMessages, chatJid);
+  }
+
+  if (AGENT_SELF_EVAL) {
+    tryEvaluateConversation(group.folder, group.name, missedMessages, chatJid);
   }
 
   return true;
@@ -513,6 +555,19 @@ function nextOccurrence(hour: number, minute: number): string {
   return next.toISOString();
 }
 
+/** Schedule daily session reset to compact agent context. */
+function scheduleSessionReset(): void {
+  const nextRun = nextOccurrence(SESSION_RESET_HOUR, 0);
+  const delay = new Date(nextRun).getTime() - Date.now();
+  logger.info({ nextRun }, 'Session reset scheduled');
+  sessionResetTimer = setTimeout(() => {
+    clearAllSessions();
+    sessions = {};
+    logger.info('Daily session reset: all agent sessions cleared');
+    scheduleSessionReset();
+  }, delay);
+}
+
 const AUTO_UPDATE_TASK_ID = 'task-auto-update-nanoclaw';
 const AUTO_UPDATE_PROMPT = `You are running an automated NanoClaw update check. Follow these steps exactly:
 
@@ -619,6 +674,56 @@ function seedBackupTask(groups: Record<string, RegisteredGroup>): void {
   logger.info('Seeded backup scheduled task (daily 2 AM)');
 }
 
+const RETROSPECTIVE_TASK_ID = 'task-weekly-retrospective';
+const RETROSPECTIVE_PROMPT = `You are running a weekly self-retrospective. Steps:
+
+1. Read /workspace/group/reflections.md (per-conversation evaluations).
+2. List /workspace/group/conversations/ — find files from the last 7 days (YYYY-MM-DD prefixed).
+3. Read the 5 most recent conversation archives (first 100 lines each if large).
+4. Read /workspace/group/memory.md for user context.
+
+Analyze patterns:
+- What mistakes recurred across conversations?
+- What topics come up frequently?
+- What context sources did you fail to use?
+- What communication style adjustments would help?
+
+Write to /workspace/group/reflections.md:
+
+### Weekly Retrospective [YYYY-MM-DD]
+- Pattern 1: [description + concrete adjustment]
+- Pattern 2: ...
+
+Keep to 3-5 actionable items. Focus on patterns, not one-offs.
+
+If you identify rules for CLAUDE.md, note under "### Proposed CLAUDE.md Updates" — do NOT modify CLAUDE.md directly.
+
+<internal>Automated weekly retrospective — do not send messages to the user.</internal>`;
+
+function seedRetrospectiveTask(groups: Record<string, RegisteredGroup>): void {
+  if (getTaskById(RETROSPECTIVE_TASK_ID)) return;
+
+  const mainEntry = Object.entries(groups).find(([, g]) => g.isMain === true);
+  if (!mainEntry) return;
+  const [mainJid, mainGroup] = mainEntry;
+
+  createTask({
+    id: RETROSPECTIVE_TASK_ID,
+    group_folder: mainGroup.folder,
+    chat_jid: mainJid,
+    prompt: RETROSPECTIVE_PROMPT,
+    schedule_type: 'cron',
+    schedule_value: '0 4 * * 0',
+    context_mode: 'isolated',
+    next_run: nextOccurrence(4, 0),
+    status: 'active',
+    created_at: new Date().toISOString(),
+    model: 'claude-sonnet-4-6',
+    max_thinking_tokens: 10000,
+  });
+  logger.info('Seeded retrospective task (weekly Sunday 4 AM)');
+}
+
 const EMAIL_DIGEST_TASK_ID = 'task-daily-email-digest';
 const EMAIL_DIGEST_PROMPT = `You are running an automated daily email digest. Follow these steps:
 
@@ -671,9 +776,9 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
+  scheduleSessionReset();
 
   // Semantic search: embedding worker + vector store
-  let vectorStore: VectorStore | undefined;
   let embeddingWorker: EmbeddingWorker | undefined;
 
   if (SEMANTIC_SEARCH_ENABLED) {
@@ -681,15 +786,22 @@ async function main(): Promise<void> {
     if (qdrantReady) {
       vectorStore = new VectorStore(QDRANT_URL);
       embeddingWorker = new EmbeddingWorker(vectorStore);
-      embeddingWorker.start().catch(err => logger.warn({ err }, 'Embedding worker failed to start'));
+      embeddingWorker
+        .start()
+        .catch((err) =>
+          logger.warn({ err }, 'Embedding worker failed to start'),
+        );
     } else {
-      logger.warn('Qdrant not available, semantic search disabled for this session');
+      logger.warn(
+        'Qdrant not available, semantic search disabled for this session',
+      );
     }
   }
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    if (sessionResetTimer) clearTimeout(sessionResetTimer);
     embeddingWorker?.stop();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
@@ -726,12 +838,23 @@ async function main(): Promise<void> {
       channel?: string,
       isGroup?: boolean,
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
+    onDirectSend: (jid: string, text: string) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) {
+        logger.warn({ jid }, 'No channel owns JID, cannot direct-send');
+        return;
+      }
+      channel
+        .sendMessage(jid, text)
+        .catch((err) => logger.error({ err, jid }, 'Direct-send failed'));
+    },
     registeredGroups: () => registeredGroups,
   };
 
   // Create and connect all registered channels.
   // Each channel self-registers via the barrel import above.
   // Factories return null when credentials are missing, so unconfigured channels are skipped.
+  const pendingChannels: Array<{ name: string; channel: Channel }> = [];
   for (const channelName of getRegisteredChannelNames()) {
     const factory = getChannelFactory(channelName)!;
     const channel = factory(channelOpts);
@@ -742,16 +865,24 @@ async function main(): Promise<void> {
       );
       continue;
     }
-    try {
-      await channel.connect();
-    } catch (err) {
+    pendingChannels.push({ name: channelName, channel });
+  }
+
+  const results = await Promise.allSettled(
+    pendingChannels.map(({ name, channel }) =>
+      channel.connect().then(() => ({ name, channel })),
+    ),
+  );
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    if (result.status === 'fulfilled') {
+      channels.push(result.value.channel);
+    } else {
       logger.error(
-        { channel: channelName, err },
+        { channel: pendingChannels[i].name, err: result.reason },
         'Channel failed to connect — skipping',
       );
-      continue;
     }
-    channels.push(channel);
   }
   if (channels.length === 0) {
     logger.fatal('No channels connected');
@@ -783,6 +914,9 @@ async function main(): Promise<void> {
   seedAutoUpdateTask(registeredGroups);
   seedBackupTask(registeredGroups);
   seedEmailDigestTask(registeredGroups);
+  if (AGENT_SELF_EVAL) {
+    seedRetrospectiveTask(registeredGroups);
+  }
   startIpcWatcher({
     sendMessage: (jid, text) => {
       const channel = findChannel(channels, jid);
@@ -804,7 +938,7 @@ async function main(): Promise<void> {
     semanticSearch: vectorStore
       ? async (chatJid, query, topK) => {
           const queryVector = await embed(query);
-          return vectorStore.search(queryVector, chatJid, topK);
+          return vectorStore!.search(queryVector, chatJid, topK);
         }
       : undefined,
   });
