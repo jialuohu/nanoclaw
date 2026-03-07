@@ -91,7 +91,12 @@ describe('tryEvaluateConversation', () => {
       makeMessage({ id: 'msg-3' }),
     ];
     expect(() =>
-      tryEvaluateConversation('test-folder', 'Test Group', messages, 'test@g.us'),
+      tryEvaluateConversation(
+        'test-folder',
+        'Test Group',
+        messages,
+        'test@g.us',
+      ),
     ).not.toThrow();
     expect(logger.warn).toHaveBeenCalled();
   });

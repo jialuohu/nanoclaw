@@ -56,14 +56,16 @@ function enableCalendar(ch: GoogleCalendarChannel): void {
   };
 }
 
-function makeEvent(opts: {
-  id?: string;
-  summary?: string;
-  location?: string;
-  htmlLink?: string;
-  startDateTime?: string;
-  startDate?: string;
-} = {}) {
+function makeEvent(
+  opts: {
+    id?: string;
+    summary?: string;
+    location?: string;
+    htmlLink?: string;
+    startDateTime?: string;
+    startDate?: string;
+  } = {},
+) {
   const {
     id = 'evt-1',
     summary = 'Team Standup',
@@ -171,7 +173,9 @@ describe('formatEventTime', () => {
 
 describe('Reminder delivery', () => {
   let onMessage: ReturnType<typeof vi.fn<OnInboundMessage>>;
-  let onDirectSend: ReturnType<typeof vi.fn<(jid: string, text: string) => void>>;
+  let onDirectSend: ReturnType<
+    typeof vi.fn<(jid: string, text: string) => void>
+  >;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -215,7 +219,9 @@ describe('Reminder delivery', () => {
     expect(msg.sender_name).toBe('Google Calendar');
     expect(msg.content).toContain('[Calendar Reminder] "Team Standup"');
     expect(msg.content).toContain('Location: Room 42');
-    expect(msg.content).toContain('Link: https://calendar.google.com/event/evt-1');
+    expect(msg.content).toContain(
+      'Link: https://calendar.google.com/event/evt-1',
+    );
     expect(msg.is_from_me).toBe(false);
   });
 
@@ -248,7 +254,13 @@ describe('Reminder delivery', () => {
   it('omits location and link when missing', async () => {
     mockEventsList.mockResolvedValue({
       data: {
-        items: [makeEvent({ id: 'evt-min', location: undefined, htmlLink: undefined })],
+        items: [
+          makeEvent({
+            id: 'evt-min',
+            location: undefined,
+            htmlLink: undefined,
+          }),
+        ],
       },
     });
 

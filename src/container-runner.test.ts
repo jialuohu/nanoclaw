@@ -429,11 +429,7 @@ describe('cleanup throttle', () => {
   });
 
   it('runs cleanup on first call', async () => {
-    const resultPromise = runContainerAgent(
-      testGroup,
-      testInput,
-      () => {},
-    );
+    const resultPromise = runContainerAgent(testGroup, testInput, () => {});
 
     // Emit output and close immediately
     fakeProc.stdout.push(

@@ -63,7 +63,11 @@ export function loadSenderAllowlist(
     return DEFAULT_CONFIG;
   }
 
-  if (cachedConfig && cachedPath === filePath && stat.mtimeMs === cachedMtimeMs) {
+  if (
+    cachedConfig &&
+    cachedPath === filePath &&
+    stat.mtimeMs === cachedMtimeMs
+  ) {
     return cachedConfig;
   }
 

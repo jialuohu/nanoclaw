@@ -541,7 +541,10 @@ export class TelegramChannel implements Channel {
     const interval = setInterval(() => {
       const numericId = jid.replace(/^tg:/, '');
       bot.api.sendChatAction(numericId, 'typing').catch((err) => {
-        logger.debug({ jid, err }, 'Failed to refresh Telegram typing indicator');
+        logger.debug(
+          { jid, err },
+          'Failed to refresh Telegram typing indicator',
+        );
       });
     }, 4000);
 

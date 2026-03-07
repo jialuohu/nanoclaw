@@ -13,7 +13,7 @@ export function tryEvaluateConversation(
   if (messages.length < MIN_MESSAGES) return;
 
   const summary = messages
-    .map(m => `${m.sender_name}: ${m.content}`)
+    .map((m) => `${m.sender_name}: ${m.content}`)
     .join('\n')
     .slice(0, 3000);
 
@@ -57,6 +57,9 @@ ${summary}
     });
     logger.debug({ group: groupName }, 'Scheduled self-evaluation');
   } catch (err) {
-    logger.warn({ err, group: groupName }, 'Failed to schedule self-evaluation');
+    logger.warn(
+      { err, group: groupName },
+      'Failed to schedule self-evaluation',
+    );
   }
 }

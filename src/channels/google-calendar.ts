@@ -8,11 +8,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { logger } from '../logger.js';
 import { readEnvFile } from '../env.js';
 import { registerChannel, ChannelOpts } from './registry.js';
-import {
-  Channel,
-  OnInboundMessage,
-  RegisteredGroup,
-} from '../types.js';
+import { Channel, OnInboundMessage, RegisteredGroup } from '../types.js';
 
 export interface GoogleCalendarChannelOpts {
   onMessage: OnInboundMessage;
@@ -187,7 +183,9 @@ export class GoogleCalendarChannel implements Channel {
       // Cap notified IDs set
       if (this.notifiedEventIds.size > NOTIFIED_IDS_CAP) {
         const ids = [...this.notifiedEventIds];
-        this.notifiedEventIds = new Set(ids.slice(ids.length - NOTIFIED_IDS_KEEP));
+        this.notifiedEventIds = new Set(
+          ids.slice(ids.length - NOTIFIED_IDS_KEEP),
+        );
       }
 
       this.consecutiveErrors = 0;

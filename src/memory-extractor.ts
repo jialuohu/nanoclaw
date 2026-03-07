@@ -13,7 +13,7 @@ export function tryExtractMemories(
   if (messages.length < MIN_MESSAGES) return;
 
   const summary = messages
-    .map(m => `${m.sender_name}: ${m.content}`)
+    .map((m) => `${m.sender_name}: ${m.content}`)
     .join('\n')
     .slice(0, 3000);
 
@@ -41,6 +41,9 @@ ${summary}
     });
     logger.debug({ group: groupName }, 'Scheduled memory extraction');
   } catch (err) {
-    logger.warn({ err, group: groupName }, 'Failed to schedule memory extraction');
+    logger.warn(
+      { err, group: groupName },
+      'Failed to schedule memory extraction',
+    );
   }
 }
