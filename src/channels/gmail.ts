@@ -32,14 +32,12 @@ interface AccountConfig {
   credDir: string;
 }
 
-export interface DigestEntry {
-  account: string;
-  sender: string;
-  senderName: string;
-  subject: string;
-  snippet: string;
-  timestamp: string;
-}
+const MAX_POLL_RESULTS = 10;
+const PROCESSED_IDS_CAP = 5000;
+const PROCESSED_IDS_KEEP = 2500;
+const THREAD_META_CAP = 2000;
+const THREAD_META_KEEP = 1000;
+const MAX_BACKOFF_MS = 30 * 60 * 1000;
 
 const CATEGORY_LABELS: Record<string, string> = {
   CATEGORY_PRIMARY: 'Primary',
@@ -95,7 +93,7 @@ export function parseGmailJid(jid: string): {
   const candidate = stripped.slice(0, colonIdx);
   const rest = stripped.slice(colonIdx + 1);
   if (rest.length > 0) {
-    return { accountName: candidate, threadId: rest };
+    return { accountName: candidate || 'default', threadId: rest };
   }
   return { accountName: 'default', threadId: stripped };
 }
@@ -107,31 +105,6 @@ export function getCategoryHint(labelIds: string[]): string | null {
     }
   }
   return null;
-}
-
-export function appendToDigestQueue(
-  filePath: string,
-  entry: DigestEntry,
-): void {
-  let queue: DigestEntry[] = [];
-  try {
-    if (fs.existsSync(filePath)) {
-      queue = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-    }
-  } catch (err) {
-    logger.warn({ filePath, err }, 'Corrupt digest queue file, resetting');
-    queue = [];
-  }
-  queue.push(entry);
-  if (queue.length > 200) {
-    const dropped = queue.length - 200;
-    logger.warn(
-      { filePath, dropped },
-      'Digest queue overflow, dropping oldest entries',
-    );
-    queue = queue.slice(queue.length - 200);
-  }
-  fs.writeFileSync(filePath, JSON.stringify(queue, null, 2));
 }
 
 export function extractTextBody(
@@ -243,7 +216,7 @@ class GmailAccount {
         this.consecutiveErrors > 0
           ? Math.min(
               this.pollIntervalMs * Math.pow(2, this.consecutiveErrors),
-              30 * 60 * 1000,
+              MAX_BACKOFF_MS,
             )
           : this.pollIntervalMs;
       this.pollTimer = setTimeout(() => {
@@ -288,7 +261,7 @@ class GmailAccount {
       return;
     }
 
-    const subject = meta.subject.startsWith('Re:')
+    const subject = /^(Re|Fwd?|FW):\s*/i.test(meta.subject)
       ? meta.subject
       : `Re: ${meta.subject}`;
 
@@ -366,7 +339,7 @@ class GmailAccount {
     const res = await this.gmail.users.messages.list({
       userId: 'me',
       q: query,
-      maxResults: 10,
+      maxResults: MAX_POLL_RESULTS,
     });
 
     const messages = res.data.messages || [];
@@ -387,15 +360,15 @@ class GmailAccount {
     }
 
     // Cap processed ID set to prevent unbounded growth
-    if (this.processedIds.size > 5000) {
+    if (this.processedIds.size > PROCESSED_IDS_CAP) {
       const ids = [...this.processedIds];
-      this.processedIds = new Set(ids.slice(ids.length - 2500));
+      this.processedIds = new Set(ids.slice(ids.length - PROCESSED_IDS_KEEP));
     }
 
     // Cap thread metadata to prevent unbounded memory growth
-    if (this.threadMeta.size > 2000) {
+    if (this.threadMeta.size > THREAD_META_CAP) {
       const entries = [...this.threadMeta.entries()];
-      this.threadMeta = new Map(entries.slice(entries.length - 1000));
+      this.threadMeta = new Map(entries.slice(entries.length - THREAD_META_KEEP));
     }
   }
 

@@ -45,8 +45,6 @@ import {
   hasCredentials,
   getCategoryHint,
   extractTextBody,
-  appendToDigestQueue,
-  DigestEntry,
 } from './gmail.js';
 import type { OnInboundMessage, OnChatMetadata } from '../types.js';
 
@@ -55,18 +53,6 @@ function makeOpts(overrides?: Partial<GmailChannelOpts>): GmailChannelOpts {
     onMessage: vi.fn(),
     onChatMetadata: vi.fn(),
     registeredGroups: () => ({}),
-    ...overrides,
-  };
-}
-
-function makeDigestEntry(overrides?: Partial<DigestEntry>): DigestEntry {
-  return {
-    account: 'user@gmail.com',
-    sender: 'news@example.com',
-    senderName: 'Example News',
-    subject: 'Daily Update',
-    snippet: 'Here is the latest...',
-    timestamp: '2026-03-06T10:00:00.000Z',
     ...overrides,
   };
 }
@@ -217,6 +203,7 @@ describe('parseGmailJid', () => {
 
   it('treats empty account segment as default', () => {
     const result = parseGmailJid('gmail::thread');
+    expect(result.accountName).toBe('default');
     expect(result.threadId).toBe('thread');
   });
 });
@@ -357,65 +344,13 @@ describe('extractTextBody', () => {
     };
     expect(extractTextBody(payload)).toBe('');
   });
-});
 
-describe('appendToDigestQueue', () => {
-  let tmpDir: string;
-  let queuePath: string;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gmail-test-'));
-    queuePath = path.join(tmpDir, 'email-digest-queue.json');
-  });
-
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it('creates file and appends entry when file does not exist', () => {
-    appendToDigestQueue(queuePath, makeDigestEntry());
-    const queue = JSON.parse(fs.readFileSync(queuePath, 'utf-8'));
-    expect(queue).toHaveLength(1);
-    expect(queue[0].sender).toBe('news@example.com');
-  });
-
-  it('appends to existing queue', () => {
-    fs.writeFileSync(
-      queuePath,
-      JSON.stringify([makeDigestEntry({ subject: 'First' })]),
-    );
-    appendToDigestQueue(queuePath, makeDigestEntry({ subject: 'Second' }));
-    const queue = JSON.parse(fs.readFileSync(queuePath, 'utf-8'));
-    expect(queue).toHaveLength(2);
-    expect(queue[0].subject).toBe('First');
-    expect(queue[1].subject).toBe('Second');
-  });
-
-  it('caps queue at 200 entries, keeping newest', () => {
-    const existing = Array.from({ length: 200 }, (_, i) =>
-      makeDigestEntry({ subject: `Entry ${i}` }),
-    );
-    fs.writeFileSync(queuePath, JSON.stringify(existing));
-
-    appendToDigestQueue(queuePath, makeDigestEntry({ subject: 'New entry' }));
-    const queue = JSON.parse(fs.readFileSync(queuePath, 'utf-8'));
-    expect(queue).toHaveLength(200);
-    expect(queue[199].subject).toBe('New entry');
-    expect(queue[0].subject).toBe('Entry 1');
-  });
-
-  it('handles malformed JSON by resetting queue', () => {
-    fs.writeFileSync(queuePath, '{not valid json!!!');
-    appendToDigestQueue(queuePath, makeDigestEntry());
-    const queue = JSON.parse(fs.readFileSync(queuePath, 'utf-8'));
-    expect(queue).toHaveLength(1);
-  });
-
-  it('handles empty file by starting fresh', () => {
-    fs.writeFileSync(queuePath, '');
-    appendToDigestQueue(queuePath, makeDigestEntry());
-    const queue = JSON.parse(fs.readFileSync(queuePath, 'utf-8'));
-    expect(queue).toHaveLength(1);
+  it('handles malformed base64 without throwing', () => {
+    const payload = {
+      mimeType: 'text/plain' as const,
+      body: { data: '!!invalid!!' },
+    };
+    expect(() => extractTextBody(payload)).not.toThrow();
   });
 });
 
@@ -672,5 +607,13 @@ describe('Gmail polling (integration)', () => {
     expect(onMessage).toHaveBeenCalledTimes(1);
     // Multi-account mode should include the account email
     expect(onMessage.mock.calls[0][1].content).toContain('(work@company.com)');
+  });
+
+  it('silently handles send to non-existent account', async () => {
+    const ch = makeChannel();
+    await ch.connect();
+    await ch.sendMessage('gmail:nonexistent:thread1', 'reply');
+    await ch.disconnect();
+    expect(mockMessagesSend).not.toHaveBeenCalled();
   });
 });
