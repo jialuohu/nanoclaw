@@ -1,0 +1,22 @@
+skill: wecom
+version: 1.0.0
+description: "WeCom (WeChat Work) bot channel via HTTP callback"
+core_version: 0.1.0
+adds:
+  - src/channels/wecom.ts
+  - src/channels/wecom.test.ts
+  - src/wecom-crypto.ts
+modifies:
+  - src/channels/index.ts
+structured:
+  npm_dependencies: {}
+  env_additions:
+    - WECOM_CORPID
+    - WECOM_CORPSECRET
+    - WECOM_AGENTID
+    - WECOM_TOKEN
+    - WECOM_ENCODING_AES_KEY
+    - WECOM_PORT
+conflicts: []
+depends: []
+test: "npx vitest run src/channels/wecom.test.ts src/wecom-crypto.test.ts"
