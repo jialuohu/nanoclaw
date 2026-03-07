@@ -36,3 +36,7 @@ groups/global/*
 .nanoclaw/
 
 agents-sdk-docs
+
+# Qdrant + embedding model cache
+qdrant_storage/
+models/

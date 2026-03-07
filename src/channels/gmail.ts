@@ -368,7 +368,9 @@ class GmailAccount {
     // Cap thread metadata to prevent unbounded memory growth
     if (this.threadMeta.size > THREAD_META_CAP) {
       const entries = [...this.threadMeta.entries()];
-      this.threadMeta = new Map(entries.slice(entries.length - THREAD_META_KEEP));
+      this.threadMeta = new Map(
+        entries.slice(entries.length - THREAD_META_KEEP),
+      );
     }
   }
 

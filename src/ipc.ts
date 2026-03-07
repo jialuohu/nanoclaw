@@ -23,6 +23,19 @@ export interface IpcDeps {
     availableGroups: AvailableGroup[],
     registeredJids: Set<string>,
   ) => void;
+  semanticSearch?: (
+    chatJid: string | null,
+    query: string,
+    topK: number,
+  ) => Promise<
+    Array<{
+      score: number;
+      content: string;
+      sender: string;
+      timestamp: string;
+      chatJid: string;
+    }>
+  >;
 }
 
 let ipcWatcherRunning = false;
@@ -163,6 +176,19 @@ export function startIpcWatcher(deps: IpcDeps): void {
   logger.info('IPC watcher started (per-group namespaces)');
 }
 
+function writeIpcResponse(
+  groupFolder: string,
+  requestId: string,
+  data: object,
+): void {
+  const dir = path.join(DATA_DIR, 'ipc', groupFolder, 'responses');
+  fs.mkdirSync(dir, { recursive: true });
+  const filePath = path.join(dir, `${requestId}.json`);
+  const tempPath = `${filePath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(data));
+  fs.renameSync(tempPath, filePath);
+}
+
 export async function processTaskIpc(
   data: {
     type: string;
@@ -186,6 +212,10 @@ export async function processTaskIpc(
     containerConfig?: RegisteredGroup['containerConfig'];
     model?: string;
     max_thinking_tokens?: number;
+    // For semantic_search
+    requestId?: string;
+    query?: string;
+    topK?: number;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -529,6 +559,36 @@ export async function processTaskIpc(
       // Give IPC processing a moment to clean up, then exit.
       // systemd will restart the service automatically.
       setTimeout(() => process.exit(0), 1000);
+      break;
+
+    case 'semantic_search':
+      if (data.requestId && data.query) {
+        try {
+          if (!deps.semanticSearch) {
+            writeIpcResponse(sourceGroup, data.requestId, {
+              error: 'Semantic search is not enabled',
+              results: [],
+            });
+            break;
+          }
+          const results = await deps.semanticSearch(
+            data.chatJid || null,
+            data.query,
+            Math.min(data.topK || 5, 20),
+          );
+          writeIpcResponse(sourceGroup, data.requestId, { results });
+          logger.debug(
+            { sourceGroup, query: data.query, resultCount: results.length },
+            'Semantic search completed',
+          );
+        } catch (err) {
+          logger.error({ err, sourceGroup }, 'Semantic search error');
+          writeIpcResponse(sourceGroup, data.requestId, {
+            error: err instanceof Error ? err.message : String(err),
+            results: [],
+          });
+        }
+      }
       break;
 
     default:

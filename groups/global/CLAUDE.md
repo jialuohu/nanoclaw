@@ -87,11 +87,25 @@ No ## headings. No [links](url). No **double stars**.
 
 ## Memory
 
-The `conversations/` folder contains searchable history of past conversations. Use this to recall context from previous sessions.
+Your persistent memory is stored in `memory.md` in your group workspace.
 
-When you learn something important:
-- Create files for structured data (e.g., `customers.md`, `preferences.md`)
-- Split files larger than 500 lines into folders
-- Keep an index in your memory for the files you create
+**At the START of every session:**
+- Read `/workspace/group/memory.md` if it exists
 
-If you want to remember something, WRITE IT TO A FILE. "Mental notes" don't survive session restarts. Files do.
+**At the END of every session (before your final response):**
+- Write any important NEW facts you learned to `memory.md`
+- Read the file first to avoid duplicating existing entries
+
+**Format:**
+### [Category]
+- [YYYY-MM-DD] Fact description
+
+Categories: Personal, Work/School, Preferences, Projects, Relationships, Schedule
+
+**Rules:**
+- Only record facts worth remembering long-term (not ephemeral tasks or one-off questions)
+- Keep entries concise — one line each
+- If memory.md exceeds 200 lines, move older entries to memory-archive/YYYY-MM.md
+
+The `conversations/` folder contains archived past conversations for detailed recall.
+If you want to remember something, WRITE IT TO A FILE. "Mental notes" don't survive session restarts.

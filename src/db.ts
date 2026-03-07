@@ -153,6 +153,15 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* columns already exist */
   }
+
+  // Add embedded_at column for semantic search embedding tracking
+  try {
+    database.exec(
+      `ALTER TABLE messages ADD COLUMN embedded_at TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
 }
 
 export function initDatabase(): void {
@@ -663,6 +672,44 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     };
   }
   return result;
+}
+
+// --- Embedding functions ---
+
+export interface UnembeddedMessage {
+  id: string;
+  chat_jid: string;
+  sender: string;
+  sender_name: string;
+  content: string;
+  timestamp: string;
+}
+
+export function getUnembeddedMessages(limit: number): UnembeddedMessage[] {
+  return db
+    .prepare(
+      `SELECT id, chat_jid, sender, sender_name, content, timestamp
+       FROM messages
+       WHERE embedded_at IS NULL AND content != '' AND content IS NOT NULL
+       ORDER BY timestamp
+       LIMIT ?`,
+    )
+    .all(limit) as UnembeddedMessage[];
+}
+
+export function markMessagesEmbedded(
+  keys: Array<{ id: string; chat_jid: string }>,
+): void {
+  const now = new Date().toISOString();
+  const stmt = db.prepare(
+    `UPDATE messages SET embedded_at = ? WHERE id = ? AND chat_jid = ?`,
+  );
+  const transaction = db.transaction(() => {
+    for (const key of keys) {
+      stmt.run(now, key.id, key.chat_jid);
+    }
+  });
+  transaction();
 }
 
 // --- JSON migration ---

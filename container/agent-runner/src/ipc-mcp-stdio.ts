@@ -420,6 +420,65 @@ server.tool(
   },
 );
 
+server.tool(
+  'search_history',
+  `Search past conversation history using semantic similarity. Finds messages related to your query even without exact word matches. Use to recall previous discussions or find what was said about a topic.`,
+  {
+    query: z.string().describe('What to search for (natural language)'),
+    chat_jid: z.string().optional().describe('Limit to specific chat. Omit to search current chat.'),
+    top_k: z.number().optional().default(5).describe('Number of results (default 5, max 20)'),
+  },
+  async (args) => {
+    const requestId = `search-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const topK = Math.min(args.top_k ?? 5, 20);
+
+    writeIpcFile(TASKS_DIR, {
+      type: 'semantic_search',
+      requestId,
+      query: args.query,
+      chatJid: args.chat_jid || chatJid,
+      topK,
+      groupFolder,
+      timestamp: new Date().toISOString(),
+    });
+
+    const RESPONSES_DIR = path.join(IPC_DIR, 'responses');
+    const responseFile = path.join(RESPONSES_DIR, `${requestId}.json`);
+    const POLL_MS = 200;
+    const TIMEOUT_MS = 30000;
+    const start = Date.now();
+
+    while (Date.now() - start < TIMEOUT_MS) {
+      if (fs.existsSync(responseFile)) {
+        try {
+          const response = JSON.parse(fs.readFileSync(responseFile, 'utf-8'));
+          fs.unlinkSync(responseFile);
+
+          if (response.error) {
+            return { content: [{ type: 'text' as const, text: `Search error: ${response.error}` }], isError: true };
+          }
+          if (!response.results || response.results.length === 0) {
+            return { content: [{ type: 'text' as const, text: 'No relevant messages found.' }] };
+          }
+
+          const formatted = response.results
+            .map((r: { sender: string; timestamp: string; content: string; score: number }, i: number) =>
+              `${i + 1}. [${r.sender}] (${r.timestamp}, score: ${r.score.toFixed(2)})\n   ${r.content.slice(0, 300)}${r.content.length > 300 ? '...' : ''}`
+            )
+            .join('\n\n');
+
+          return { content: [{ type: 'text' as const, text: `Found ${response.results.length} relevant messages:\n\n${formatted}` }] };
+        } catch (err) {
+          return { content: [{ type: 'text' as const, text: `Failed to read search response: ${err}` }], isError: true };
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, POLL_MS));
+    }
+
+    return { content: [{ type: 'text' as const, text: 'Search timed out. The search service may be unavailable.' }], isError: true };
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

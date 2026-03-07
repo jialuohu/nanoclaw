@@ -5,6 +5,9 @@ import {
   ASSISTANT_NAME,
   IDLE_TIMEOUT,
   POLL_INTERVAL,
+  QDRANT_URL,
+  QDRANT_STORAGE_DIR,
+  SEMANTIC_SEARCH_ENABLED,
   TELEGRAM_BOT_POOL,
   TRIGGER_PATTERN,
 } from './config.js';
@@ -55,6 +58,10 @@ import {
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import { embed } from './embeddings.js';
+import { VectorStore } from './vector-store.js';
+import { EmbeddingWorker } from './embedding-worker.js';
+import { ensureQdrant } from './qdrant-setup.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -665,9 +672,25 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   loadState();
 
+  // Semantic search: embedding worker + vector store
+  let vectorStore: VectorStore | undefined;
+  let embeddingWorker: EmbeddingWorker | undefined;
+
+  if (SEMANTIC_SEARCH_ENABLED) {
+    const qdrantReady = await ensureQdrant(QDRANT_URL, QDRANT_STORAGE_DIR);
+    if (qdrantReady) {
+      vectorStore = new VectorStore(QDRANT_URL);
+      embeddingWorker = new EmbeddingWorker(vectorStore);
+      embeddingWorker.start().catch(err => logger.warn({ err }, 'Embedding worker failed to start'));
+    } else {
+      logger.warn('Qdrant not available, semantic search disabled for this session');
+    }
+  }
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
+    embeddingWorker?.stop();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
@@ -778,6 +801,12 @@ async function main(): Promise<void> {
     getAvailableGroups,
     writeGroupsSnapshot: (gf, im, ag, rj) =>
       writeGroupsSnapshot(gf, im, ag, rj),
+    semanticSearch: vectorStore
+      ? async (chatJid, query, topK) => {
+          const queryVector = await embed(query);
+          return vectorStore.search(queryVector, chatJid, topK);
+        }
+      : undefined,
   });
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();

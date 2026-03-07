@@ -201,7 +201,7 @@ function buildVolumeMounts(
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
   const groupIpcDir = resolveGroupIpcPath(group.folder);
-  for (const sub of ['messages', 'tasks', 'input']) {
+  for (const sub of ['messages', 'tasks', 'input', 'responses']) {
     const dir = path.join(groupIpcDir, sub);
     fs.mkdirSync(dir, { recursive: true, mode: 0o777 });
     // Ensure 777 regardless of umask (mkdirSync mode is masked by umask).

@@ -10,6 +10,8 @@ const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
   'TELEGRAM_BOT_POOL',
+  'QDRANT_URL',
+  'SEMANTIC_SEARCH',
 ]);
 
 export const ASSISTANT_NAME =
@@ -38,6 +40,7 @@ export const SENDER_ALLOWLIST_PATH = path.join(
   'sender-allowlist.json',
 );
 export const STORE_DIR = path.resolve(PROJECT_ROOT, 'store');
+export const QDRANT_STORAGE_DIR = path.resolve(PROJECT_ROOT, 'qdrant_storage');
 export const GROUPS_DIR = path.resolve(PROJECT_ROOT, 'groups');
 export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 
@@ -76,6 +79,12 @@ export const TELEGRAM_BOT_POOL = (
   .split(',')
   .map((t) => t.trim())
   .filter(Boolean);
+
+// Semantic search / Qdrant
+export const QDRANT_URL =
+  process.env.QDRANT_URL || envConfig.QDRANT_URL || 'http://localhost:6333';
+export const SEMANTIC_SEARCH_ENABLED =
+  (process.env.SEMANTIC_SEARCH || envConfig.SEMANTIC_SEARCH || 'true') !== 'false';
 
 // Timezone for scheduled tasks (cron expressions, etc.)
 // Uses system timezone by default

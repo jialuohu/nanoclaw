@@ -19,6 +19,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
+    "@qdrant/js-client-rest": "^1.17.0",
     "better-sqlite3": "^11.8.1",
     "cron-parser": "^5.5.0",
     "google-auth-library": "^10.6.1",
