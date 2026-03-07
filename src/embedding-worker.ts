@@ -51,9 +51,7 @@ export class EmbeddingWorker {
         return;
       }
 
-      const texts = messages.map(
-        (m) => `${m.sender_name}: ${m.content}`,
-      );
+      const texts = messages.map((m) => `${m.sender_name}: ${m.content}`);
       const vectors = await embedBatch(texts);
 
       const points: MessagePoint[] = messages.map((m, i) => ({
@@ -74,10 +72,7 @@ export class EmbeddingWorker {
         messages.map((m) => ({ id: m.id, chat_jid: m.chat_jid })),
       );
 
-      logger.debug(
-        { count: messages.length },
-        'Embedded and indexed messages',
-      );
+      logger.debug({ count: messages.length }, 'Embedded and indexed messages');
     } catch (err) {
       logger.error({ err }, 'Embedding worker error');
     }

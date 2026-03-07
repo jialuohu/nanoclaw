@@ -10,15 +10,36 @@ import { readEnvFile } from '../env.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
   Channel,
-  OnChatMetadata,
   OnInboundMessage,
   RegisteredGroup,
 } from '../types.js';
 
 export interface GoogleCalendarChannelOpts {
   onMessage: OnInboundMessage;
-  onChatMetadata: OnChatMetadata;
+  onDirectSend?: (jid: string, text: string) => void;
   registeredGroups: () => Record<string, RegisteredGroup>;
+}
+
+const NOTIFIED_IDS_CAP = 5000;
+const NOTIFIED_IDS_KEEP = 2500;
+const MAX_BACKOFF_MS = 30 * 60 * 1000;
+
+export function hasCredentials(dir: string): boolean {
+  return (
+    fs.existsSync(path.join(dir, 'gcp-oauth.keys.json')) &&
+    fs.existsSync(path.join(dir, 'credentials.json'))
+  );
+}
+
+export function formatEventTime(
+  start: calendar_v3.Schema$EventDateTime | undefined,
+): string {
+  if (!start) return 'unknown';
+  if (start.dateTime) {
+    const d = new Date(start.dateTime);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  return 'all-day';
 }
 
 export class GoogleCalendarChannel implements Channel {
@@ -31,17 +52,14 @@ export class GoogleCalendarChannel implements Channel {
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private notifiedEventIds = new Set<string>();
   private consecutiveErrors = 0;
-  private lastAgendaDate = '';
   private reminderMinutes: number;
-  private agendaHour: number;
 
   constructor(opts: GoogleCalendarChannelOpts, pollIntervalMs = 60000) {
     this.opts = opts;
     this.pollIntervalMs = pollIntervalMs;
 
-    const env = readEnvFile(['GCAL_REMINDER_MINUTES', 'GCAL_AGENDA_HOUR']);
+    const env = readEnvFile(['GCAL_REMINDER_MINUTES']);
     this.reminderMinutes = parseInt(env.GCAL_REMINDER_MINUTES || '15', 10);
-    this.agendaHour = parseInt(env.GCAL_AGENDA_HOUR || '8', 10);
   }
 
   async connect(): Promise<void> {
@@ -49,9 +67,9 @@ export class GoogleCalendarChannel implements Channel {
     const keysPath = path.join(credDir, 'gcp-oauth.keys.json');
     const tokensPath = path.join(credDir, 'credentials.json');
 
-    if (!fs.existsSync(keysPath) || !fs.existsSync(tokensPath)) {
+    if (!hasCredentials(credDir)) {
       logger.warn(
-        'Google Calendar credentials not found in ~/.google-calendar/. Skipping. Run npx tsx scripts/gcal-auth.ts to set up.',
+        'Google Calendar credentials not found in ~/.google-calendar/. Skipping.',
       );
       return;
     }
@@ -95,11 +113,11 @@ export class GoogleCalendarChannel implements Channel {
         this.consecutiveErrors > 0
           ? Math.min(
               this.pollIntervalMs * Math.pow(2, this.consecutiveErrors),
-              30 * 60 * 1000,
+              MAX_BACKOFF_MS,
             )
           : this.pollIntervalMs;
       this.pollTimer = setTimeout(() => {
-        this.poll()
+        this.checkReminders()
           .catch((err) => logger.error({ err }, 'Google Calendar poll error'))
           .finally(() => {
             if (this.calendar) schedulePoll();
@@ -108,12 +126,12 @@ export class GoogleCalendarChannel implements Channel {
     };
 
     // Initial poll
-    await this.poll();
+    await this.checkReminders();
     schedulePoll();
   }
 
   async sendMessage(_jid: string, _text: string): Promise<void> {
-    // No-op: agents use container-side API for calendar writes
+    // No-op
   }
 
   isConnected(): boolean {
@@ -136,125 +154,50 @@ export class GoogleCalendarChannel implements Channel {
 
   // --- Private ---
 
-  private async poll(): Promise<void> {
-    if (!this.calendar) return;
-
-    try {
-      await this.checkReminders();
-      await this.checkDailyAgenda();
-      this.consecutiveErrors = 0;
-    } catch (err) {
-      this.consecutiveErrors++;
-      const backoffMs = Math.min(
-        this.pollIntervalMs * Math.pow(2, this.consecutiveErrors),
-        30 * 60 * 1000,
-      );
-      logger.error(
-        {
-          err,
-          consecutiveErrors: this.consecutiveErrors,
-          nextPollMs: backoffMs,
-        },
-        'Google Calendar poll failed',
-      );
-    }
-  }
-
   private async checkReminders(): Promise<void> {
     if (!this.calendar) return;
 
-    const now = new Date();
-    const soon = new Date(now.getTime() + this.reminderMinutes * 60 * 1000);
+    try {
+      const now = new Date();
+      const soon = new Date(now.getTime() + this.reminderMinutes * 60 * 1000);
 
-    const res = await this.calendar.events.list({
-      calendarId: 'primary',
-      timeMin: now.toISOString(),
-      timeMax: soon.toISOString(),
-      singleEvents: true,
-      orderBy: 'startTime',
-    });
-
-    const events = res.data.items || [];
-
-    for (const event of events) {
-      if (!event.id || this.notifiedEventIds.has(event.id)) continue;
-      this.notifiedEventIds.add(event.id);
-
-      const title = event.summary || '(No title)';
-      const startTime = this.formatEventTime(event.start);
-      const lines = [`[Calendar Reminder] "${title}" starts at ${startTime}`];
-      if (event.location) lines.push(`Location: ${event.location}`);
-      if (event.htmlLink) lines.push(`Link: ${event.htmlLink}`);
-
-      const content = lines.join('\n');
-      this.deliverToMainGroup(content, `gcal-reminder:${event.id}`);
-    }
-
-    // Cap notified IDs set to prevent unbounded growth
-    if (this.notifiedEventIds.size > 5000) {
-      const ids = [...this.notifiedEventIds];
-      this.notifiedEventIds = new Set(ids.slice(ids.length - 2500));
-    }
-  }
-
-  private async checkDailyAgenda(): Promise<void> {
-    if (!this.calendar) return;
-
-    const now = new Date();
-    // Use local date components (not UTC) so the date matches getHours()
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-
-    // Only send once per day, after the configured hour
-    if (this.lastAgendaDate === todayStr) return;
-    if (now.getHours() < this.agendaHour) return;
-
-    const startOfDay = new Date(now);
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date(now);
-    endOfDay.setHours(23, 59, 59, 999);
-
-    const res = await this.calendar.events.list({
-      calendarId: 'primary',
-      timeMin: startOfDay.toISOString(),
-      timeMax: endOfDay.toISOString(),
-      singleEvents: true,
-      orderBy: 'startTime',
-    });
-
-    const events = res.data.items || [];
-
-    if (events.length === 0) {
-      this.deliverToMainGroup(
-        `[Daily Agenda for ${todayStr}]\nNo events scheduled today.`,
-        `gcal-agenda:${todayStr}`,
-      );
-    } else {
-      const lines = [`[Daily Agenda for ${todayStr}]`];
-      events.forEach((event, i) => {
-        const time = this.formatEventTime(event.start);
-        const title = event.summary || '(No title)';
-        const location = event.location ? ` (${event.location})` : '';
-        lines.push(`${i + 1}. ${time} - ${title}${location}`);
+      const res = await this.calendar.events.list({
+        calendarId: 'primary',
+        timeMin: now.toISOString(),
+        timeMax: soon.toISOString(),
+        singleEvents: true,
+        orderBy: 'startTime',
       });
 
-      this.deliverToMainGroup(lines.join('\n'), `gcal-agenda:${todayStr}`);
-    }
+      const events = res.data.items || [];
 
-    // Mark as sent only after successful delivery (so transient API
-    // errors don't skip the agenda for the entire day)
-    this.lastAgendaDate = todayStr;
-  }
+      for (const event of events) {
+        if (!event.id || this.notifiedEventIds.has(event.id)) continue;
+        this.notifiedEventIds.add(event.id);
 
-  private formatEventTime(
-    start: calendar_v3.Schema$EventDateTime | undefined,
-  ): string {
-    if (!start) return 'unknown';
-    if (start.dateTime) {
-      const d = new Date(start.dateTime);
-      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const title = event.summary || '(No title)';
+        const startTime = formatEventTime(event.start);
+        const lines = [`[Calendar Reminder] "${title}" starts at ${startTime}`];
+        if (event.location) lines.push(`Location: ${event.location}`);
+        if (event.htmlLink) lines.push(`Link: ${event.htmlLink}`);
+
+        this.deliverToMainGroup(lines.join('\n'), `gcal-reminder:${event.id}`);
+      }
+
+      // Cap notified IDs set
+      if (this.notifiedEventIds.size > NOTIFIED_IDS_CAP) {
+        const ids = [...this.notifiedEventIds];
+        this.notifiedEventIds = new Set(ids.slice(ids.length - NOTIFIED_IDS_KEEP));
+      }
+
+      this.consecutiveErrors = 0;
+    } catch (err) {
+      this.consecutiveErrors++;
+      logger.error(
+        { err, consecutiveErrors: this.consecutiveErrors },
+        'Google Calendar poll failed, backing off',
+      );
     }
-    // All-day event
-    return 'all-day';
   }
 
   private deliverToMainGroup(content: string, eventId: string): void {
@@ -267,15 +210,20 @@ export class GoogleCalendarChannel implements Channel {
     }
 
     const mainJid = mainEntry[0];
-    const timestamp = new Date().toISOString();
 
+    // Send directly to the user's channel (bypasses agent judgment)
+    if (this.opts.onDirectSend) {
+      this.opts.onDirectSend(mainJid, content);
+    }
+
+    // Also store via onMessage so the reminder is in the DB for agent context
     this.opts.onMessage(mainJid, {
       id: eventId,
       chat_jid: mainJid,
       sender: 'google-calendar',
       sender_name: 'Google Calendar',
       content,
-      timestamp,
+      timestamp: new Date().toISOString(),
       is_from_me: false,
     });
   }
@@ -283,10 +231,7 @@ export class GoogleCalendarChannel implements Channel {
 
 registerChannel('google-calendar', (opts: ChannelOpts) => {
   const credDir = path.join(os.homedir(), '.google-calendar');
-  if (
-    !fs.existsSync(path.join(credDir, 'gcp-oauth.keys.json')) ||
-    !fs.existsSync(path.join(credDir, 'credentials.json'))
-  ) {
+  if (!hasCredentials(credDir)) {
     logger.warn(
       'Google Calendar: credentials not found in ~/.google-calendar/',
     );

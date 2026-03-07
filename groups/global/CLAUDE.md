@@ -91,6 +91,7 @@ Your persistent memory is stored in `memory.md` in your group workspace.
 
 **At the START of every session:**
 - Read `/workspace/group/memory.md` if it exists
+- Read `/workspace/group/reflections.md` if it exists — behavioral notes from self-evaluation
 
 **At the END of every session (before your final response):**
 - Write any important NEW facts you learned to `memory.md`

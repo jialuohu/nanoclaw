@@ -4,6 +4,7 @@ import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  _clearAllowlistCache,
   isSenderAllowed,
   isTriggerAllowed,
   loadSenderAllowlist,
@@ -24,6 +25,7 @@ function writeConfig(config: unknown, name?: string): string {
 }
 
 beforeEach(() => {
+  _clearAllowlistCache();
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'allowlist-test-'));
 });
 
@@ -212,5 +214,71 @@ describe('isTriggerAllowed', () => {
     };
     isTriggerAllowed('g1', 'eve', cfg);
     // Logger.debug is called — we just verify no crash; logger is a real pino instance
+  });
+});
+
+describe('allowlist caching', () => {
+  it('returns same object on repeated calls (cache hit)', () => {
+    const p = writeConfig({
+      default: { allow: '*', mode: 'trigger' },
+      chats: {},
+    });
+    const cfg1 = loadSenderAllowlist(p);
+    const cfg2 = loadSenderAllowlist(p);
+    expect(cfg1).toBe(cfg2); // same reference
+  });
+
+  it('invalidates cache when file changes', async () => {
+    const p = writeConfig({
+      default: { allow: '*', mode: 'trigger' },
+      chats: {},
+    });
+    const cfg1 = loadSenderAllowlist(p);
+
+    // Ensure mtime changes (filesystem resolution can be 1s on some OS)
+    await new Promise((r) => setTimeout(r, 50));
+    const fd = fs.openSync(p, 'w');
+    fs.writeSync(
+      fd,
+      JSON.stringify({
+        default: { allow: ['alice'], mode: 'drop' },
+        chats: {},
+      }),
+    );
+    fs.futimesSync(fd, new Date(), new Date(Date.now() + 2000));
+    fs.closeSync(fd);
+
+    const cfg2 = loadSenderAllowlist(p);
+    expect(cfg2).not.toBe(cfg1);
+    expect(cfg2.default.allow).toEqual(['alice']);
+  });
+
+  it('bypasses cache when pathOverride differs', () => {
+    const p1 = writeConfig(
+      { default: { allow: '*', mode: 'trigger' }, chats: {} },
+      'a.json',
+    );
+    const p2 = writeConfig(
+      { default: { allow: ['bob'], mode: 'drop' }, chats: {} },
+      'b.json',
+    );
+    const cfg1 = loadSenderAllowlist(p1);
+    const cfg2 = loadSenderAllowlist(p2);
+    expect(cfg1.default.allow).toBe('*');
+    expect(cfg2.default.allow).toEqual(['bob']);
+    expect(cfg2).not.toBe(cfg1);
+  });
+
+  it('returns default and clears cache when file is deleted', () => {
+    const p = writeConfig({
+      default: { allow: ['alice'], mode: 'trigger' },
+      chats: {},
+    });
+    const cfg1 = loadSenderAllowlist(p);
+    expect(cfg1.default.allow).toEqual(['alice']);
+
+    fs.unlinkSync(p);
+    const cfg2 = loadSenderAllowlist(p);
+    expect(cfg2.default.allow).toBe('*');
   });
 });

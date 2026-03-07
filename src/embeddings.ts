@@ -13,9 +13,13 @@ async function getPipeline(): Promise<unknown> {
   env.cacheDir = cacheDir;
 
   logger.info('Loading embedding model (first call may download ~80MB)...');
-  pipelineInstance = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
-    dtype: 'fp32',
-  });
+  pipelineInstance = await pipeline(
+    'feature-extraction',
+    'Xenova/all-MiniLM-L6-v2',
+    {
+      dtype: 'fp32',
+    },
+  );
   logger.info('Embedding model loaded');
 
   return pipelineInstance;

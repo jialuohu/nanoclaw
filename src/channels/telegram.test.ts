@@ -881,7 +881,12 @@ describe('TelegramChannel', () => {
   // --- setTyping ---
 
   describe('setTyping', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     it('sends typing action when isTyping is true', async () => {
+      vi.useFakeTimers();
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
@@ -892,6 +897,8 @@ describe('TelegramChannel', () => {
         '100200300',
         'typing',
       );
+
+      await channel.setTyping('tg:100200300', false);
     });
 
     it('does nothing when isTyping is false', async () => {
@@ -915,6 +922,7 @@ describe('TelegramChannel', () => {
     });
 
     it('handles typing indicator failure gracefully', async () => {
+      vi.useFakeTimers();
       const opts = createTestOpts();
       const channel = new TelegramChannel('test-token', opts);
       await channel.connect();
@@ -926,6 +934,142 @@ describe('TelegramChannel', () => {
       await expect(
         channel.setTyping('tg:100200300', true),
       ).resolves.toBeUndefined();
+
+      await channel.setTyping('tg:100200300', false);
+    });
+
+    it('refreshes typing indicator every 4 seconds', async () => {
+      vi.useFakeTimers();
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await channel.setTyping('tg:100200300', true);
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(3);
+
+      // Verify all calls are ('100200300', 'typing')
+      for (const call of currentBot().api.sendChatAction.mock.calls) {
+        expect(call).toEqual(['100200300', 'typing']);
+      }
+
+      await channel.setTyping('tg:100200300', false);
+    });
+
+    it('stops refreshing when setTyping(false) is called', async () => {
+      vi.useFakeTimers();
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await channel.setTyping('tg:100200300', true);
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(1);
+
+      await channel.setTyping('tg:100200300', false);
+
+      await vi.advanceTimersByTimeAsync(8000);
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(1);
+    });
+
+    it('replaces previous interval when setTyping(true) called twice', async () => {
+      vi.useFakeTimers();
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await channel.setTyping('tg:100200300', true);
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(1);
+
+      await channel.setTyping('tg:100200300', true);
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(2);
+
+      // Advance 4s — only one interval should fire, so 3 total (not 4)
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(3);
+
+      await channel.setTyping('tg:100200300', false);
+    });
+
+    it('sendMessage clears the typing interval', async () => {
+      vi.useFakeTimers();
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await channel.setTyping('tg:100200300', true);
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(1);
+
+      await channel.sendMessage('tg:100200300', 'Hello');
+
+      await vi.advanceTimersByTimeAsync(8000);
+      // sendChatAction should still be 1 (no more refresh calls)
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(1);
+    });
+
+    it('disconnect clears all typing intervals', async () => {
+      vi.useFakeTimers();
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await channel.setTyping('tg:100200300', true);
+      await channel.setTyping('tg:999888777', true);
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(2);
+
+      await channel.disconnect();
+
+      await vi.advanceTimersByTimeAsync(8000);
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(2);
+    });
+
+    it('continues refreshing even if a refresh call fails', async () => {
+      vi.useFakeTimers();
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await channel.setTyping('tg:100200300', true);
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(1);
+
+      currentBot().api.sendChatAction.mockRejectedValueOnce(
+        new Error('Network error'),
+      );
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(3);
+
+      await channel.setTyping('tg:100200300', false);
+    });
+
+    it('maintains independent typing intervals per JID', async () => {
+      vi.useFakeTimers();
+      const opts = createTestOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await channel.setTyping('tg:100200300', true);
+      await channel.setTyping('tg:999888777', true);
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(2);
+
+      // Stop only the first JID
+      await channel.setTyping('tg:100200300', false);
+
+      await vi.advanceTimersByTimeAsync(4000);
+      // Only the second JID's interval fires: 2 + 1 = 3
+      expect(currentBot().api.sendChatAction).toHaveBeenCalledTimes(3);
+
+      // Verify the last call was for the second JID
+      const lastCall = currentBot().api.sendChatAction.mock.calls.at(-1);
+      expect(lastCall).toEqual(['999888777', 'typing']);
+
+      await channel.setTyping('tg:999888777', false);
     });
   });
 

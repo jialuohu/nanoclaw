@@ -1,376 +1,400 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-
-// --- Mocks ---
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock registry (registerChannel runs at import time)
 vi.mock('./registry.js', () => ({ registerChannel: vi.fn() }));
 
-// Mock env reader
+// Mock readEnvFile
 vi.mock('../env.js', () => ({ readEnvFile: vi.fn(() => ({})) }));
 
-// Mock logger
-vi.mock('../logger.js', () => ({
-  logger: {
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  },
-}));
-
-// Mock googleapis
+// Mock googleapis for polling tests
 const mockEventsList = vi.fn();
 const mockCalendarListList = vi.fn();
+const mockSetCredentials = vi.fn();
+const mockOn = vi.fn();
 
 vi.mock('googleapis', () => ({
   google: {
     auth: {
-      OAuth2: vi.fn().mockImplementation(() => ({
-        setCredentials: vi.fn(),
-        on: vi.fn(),
-      })),
+      OAuth2: vi.fn(function (this: Record<string, unknown>) {
+        this.setCredentials = mockSetCredentials;
+        this.on = mockOn;
+      }),
     },
     calendar: vi.fn(() => ({
-      events: { list: mockEventsList },
       calendarList: { list: mockCalendarListList },
+      events: { list: mockEventsList },
     })),
   },
 }));
 
-// Mock google-auth-library (imported by the channel)
-vi.mock('google-auth-library', () => ({
-  OAuth2Client: vi.fn(),
-}));
-
-// Mock fs for factory credential check
-vi.mock('fs', async () => {
-  const actual = await vi.importActual<typeof import('fs')>('fs');
-  return { ...actual, default: actual };
-});
-
-import { registerChannel } from './registry.js';
 import {
   GoogleCalendarChannel,
   GoogleCalendarChannelOpts,
+  hasCredentials,
+  formatEventTime,
 } from './google-calendar.js';
-
-// --- Helpers ---
+import { registerChannel } from './registry.js';
+import { readEnvFile } from '../env.js';
+import type { OnInboundMessage } from '../types.js';
 
 function makeOpts(
   overrides?: Partial<GoogleCalendarChannelOpts>,
 ): GoogleCalendarChannelOpts {
   return {
     onMessage: vi.fn(),
-    onChatMetadata: vi.fn(),
+    onDirectSend: vi.fn(),
     registeredGroups: () => ({}),
     ...overrides,
   };
 }
 
-function makeOptsWithMainGroup(
-  overrides?: Partial<GoogleCalendarChannelOpts>,
-): GoogleCalendarChannelOpts {
-  return makeOpts({
-    registeredGroups: () => ({
-      'tg:main-group': {
-        name: 'Main',
-        folder: 'main',
-        trigger: '@Bot',
-        added_at: '2024-01-01T00:00:00.000Z',
-        isMain: true,
-      },
-    }),
-    ...overrides,
-  });
+/** Set the internal calendar property so checkReminders doesn't bail on null. */
+function enableCalendar(ch: GoogleCalendarChannel): void {
+  (ch as any).calendar = {
+    events: { list: mockEventsList },
+    calendarList: { list: mockCalendarListList },
+  };
 }
 
-function makeEvent(overrides: {
+function makeEvent(opts: {
   id?: string;
   summary?: string;
   location?: string;
   htmlLink?: string;
   startDateTime?: string;
   startDate?: string;
-}) {
-  const event: Record<string, unknown> = {
-    id: overrides.id || 'evt-1',
-    summary: overrides.summary || 'Team Standup',
+} = {}) {
+  const {
+    id = 'evt-1',
+    summary = 'Team Standup',
+    location,
+    htmlLink,
+    startDateTime = '2026-03-07T10:00:00-05:00',
+    startDate,
+  } = opts;
+  return {
+    id,
+    summary,
+    location,
+    htmlLink,
+    start: startDate ? { date: startDate } : { dateTime: startDateTime },
   };
-  if (overrides.location) event.location = overrides.location;
-  if (overrides.htmlLink) event.htmlLink = overrides.htmlLink;
-  if (overrides.startDateTime) {
-    event.start = { dateTime: overrides.startDateTime };
-  } else if (overrides.startDate) {
-    event.start = { date: overrides.startDate };
-  } else {
-    event.start = { dateTime: new Date().toISOString() };
-  }
-  return event;
 }
 
-// --- Tests ---
+const mainGroup = {
+  name: 'Main',
+  folder: 'main',
+  trigger: '@Bot',
+  added_at: '2026-01-01T00:00:00Z',
+  isMain: true,
+};
+
+// Factory registration must be checked before any clearAllMocks runs
+describe('Factory registration', () => {
+  it('registerChannel was called at module load', () => {
+    expect(registerChannel).toHaveBeenCalledWith(
+      'google-calendar',
+      expect.any(Function),
+    );
+  });
+});
 
 describe('GoogleCalendarChannel', () => {
   let channel: GoogleCalendarChannel;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockEventsList.mockResolvedValue({ data: { items: [] } });
-    mockCalendarListList.mockResolvedValue({ data: { items: [] } });
     channel = new GoogleCalendarChannel(makeOpts());
   });
 
-  describe('name', () => {
-    it('is google-calendar', () => {
+  describe('basic interface', () => {
+    it('name is google-calendar', () => {
       expect(channel.name).toBe('google-calendar');
+    });
+
+    it('isConnected returns false before connect', () => {
+      expect(channel.isConnected()).toBe(false);
+    });
+
+    it('disconnect sets connected to false', async () => {
+      await channel.disconnect();
+      expect(channel.isConnected()).toBe(false);
+    });
+
+    it('sendMessage is a no-op', async () => {
+      await expect(
+        channel.sendMessage('gcal:123', 'text'),
+      ).resolves.toBeUndefined();
+    });
+
+    it('accepts custom poll interval', () => {
+      const ch = new GoogleCalendarChannel(makeOpts(), 30000);
+      expect(ch.name).toBe('google-calendar');
     });
   });
 
   describe('ownsJid', () => {
     it('returns true for gcal: prefixed JIDs', () => {
-      expect(channel.ownsJid('gcal:reminder-123')).toBe(true);
-      expect(channel.ownsJid('gcal:agenda-2024-01-01')).toBe(true);
+      expect(channel.ownsJid('gcal:reminder:evt1')).toBe(true);
+      expect(channel.ownsJid('gcal:anything')).toBe(true);
     });
 
     it('returns false for non-gcal JIDs', () => {
-      expect(channel.ownsJid('gmail:abc')).toBe(false);
+      expect(channel.ownsJid('gmail:abc123')).toBe(false);
       expect(channel.ownsJid('tg:123')).toBe(false);
       expect(channel.ownsJid('12345@g.us')).toBe(false);
+      expect(channel.ownsJid('dc:456')).toBe(false);
     });
   });
+});
 
-  describe('isConnected', () => {
-    it('returns false before connect', () => {
-      expect(channel.isConnected()).toBe(false);
-    });
+describe('hasCredentials', () => {
+  it('is a function', () => {
+    expect(typeof hasCredentials).toBe('function');
+  });
+});
+
+describe('formatEventTime', () => {
+  it('returns locale time for dateTime events', () => {
+    const result = formatEventTime({ dateTime: '2026-03-07T10:00:00-05:00' });
+    expect(result).toMatch(/\d{1,2}:\d{2}/);
   });
 
-  describe('disconnect', () => {
-    it('sets connected to false', async () => {
-      await channel.disconnect();
-      expect(channel.isConnected()).toBe(false);
-    });
+  it('returns all-day for date-only events', () => {
+    expect(formatEventTime({ date: '2026-03-07' })).toBe('all-day');
   });
 
-  describe('sendMessage', () => {
-    it('is a no-op', async () => {
-      // Should not throw
-      await channel.sendMessage('gcal:test', 'hello');
-    });
+  it('returns unknown for undefined', () => {
+    expect(formatEventTime(undefined)).toBe('unknown');
+  });
+});
+
+describe('Reminder delivery', () => {
+  let onMessage: ReturnType<typeof vi.fn<OnInboundMessage>>;
+  let onDirectSend: ReturnType<typeof vi.fn<(jid: string, text: string) => void>>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    onMessage = vi.fn<OnInboundMessage>();
+    onDirectSend = vi.fn<(jid: string, text: string) => void>();
   });
 
-  describe('reminder delivery', () => {
-    it('delivers reminder for upcoming event to main group', async () => {
-      const opts = makeOptsWithMainGroup();
-      const ch = new GoogleCalendarChannel(opts);
+  function makeChannelWithMainGroup(groups?: Record<string, typeof mainGroup>) {
+    const g = groups ?? { 'tg:main': mainGroup };
+    const ch = new GoogleCalendarChannel({
+      onMessage,
+      onDirectSend,
+      registeredGroups: () => g,
+    });
+    enableCalendar(ch);
+    return ch;
+  }
 
-      // Simulate connected state by calling the private poll method
-      // We need to set up the calendar mock first
-      const event = makeEvent({
-        id: 'evt-upcoming',
-        summary: 'Team Standup',
-        location: 'Room 42',
-        htmlLink: 'https://calendar.google.com/event/evt-upcoming',
-        startDateTime: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-      });
-
-      mockEventsList.mockResolvedValue({ data: { items: [event] } });
-
-      // Access private method for testing
-      const pollMethod = (ch as any).checkReminders.bind(ch);
-      // Set calendar to non-null so poll works
-      (ch as any).calendar = { events: { list: mockEventsList } };
-
-      await pollMethod();
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'tg:main-group',
-        expect.objectContaining({
-          id: 'gcal-reminder:evt-upcoming',
-          chat_jid: 'tg:main-group',
-          sender: 'google-calendar',
-          sender_name: 'Google Calendar',
-          is_from_me: false,
-        }),
-      );
-
-      // Verify content includes key parts
-      const call = (opts.onMessage as ReturnType<typeof vi.fn>).mock.calls[0];
-      const content = call[1].content as string;
-      expect(content).toContain('[Calendar Reminder]');
-      expect(content).toContain('Team Standup');
-      expect(content).toContain('Location: Room 42');
-      expect(content).toContain(
-        'Link: https://calendar.google.com/event/evt-upcoming',
-      );
+  it('delivers reminder with correct format to main group', async () => {
+    mockEventsList.mockResolvedValue({
+      data: {
+        items: [
+          makeEvent({
+            id: 'evt-1',
+            summary: 'Team Standup',
+            location: 'Room 42',
+            htmlLink: 'https://calendar.google.com/event/evt-1',
+          }),
+        ],
+      },
     });
 
-    it('deduplicates events (same event polled twice)', async () => {
-      const opts = makeOptsWithMainGroup();
-      const ch = new GoogleCalendarChannel(opts);
+    const ch = makeChannelWithMainGroup();
+    await (ch as any).checkReminders();
 
-      const event = makeEvent({ id: 'evt-dup' });
-      mockEventsList.mockResolvedValue({ data: { items: [event] } });
-
-      (ch as any).calendar = { events: { list: mockEventsList } };
-
-      await (ch as any).checkReminders();
-      await (ch as any).checkReminders();
-
-      // Only one notification despite two polls
-      expect(opts.onMessage).toHaveBeenCalledTimes(1);
-    });
-
-    it('caps notified event IDs set at 5000', async () => {
-      const opts = makeOptsWithMainGroup();
-      const ch = new GoogleCalendarChannel(opts);
-      (ch as any).calendar = { events: { list: mockEventsList } };
-
-      // Pre-fill with 5001 entries
-      const ids = (ch as any).notifiedEventIds as Set<string>;
-      for (let i = 0; i < 5001; i++) ids.add(`old-${i}`);
-
-      mockEventsList.mockResolvedValue({ data: { items: [] } });
-      await (ch as any).checkReminders();
-
-      expect((ch as any).notifiedEventIds.size).toBeLessThanOrEqual(2500);
-    });
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    const [jid, msg] = onMessage.mock.calls[0];
+    expect(jid).toBe('tg:main');
+    expect(msg.id).toBe('gcal-reminder:evt-1');
+    expect(msg.sender).toBe('google-calendar');
+    expect(msg.sender_name).toBe('Google Calendar');
+    expect(msg.content).toContain('[Calendar Reminder] "Team Standup"');
+    expect(msg.content).toContain('Location: Room 42');
+    expect(msg.content).toContain('Link: https://calendar.google.com/event/evt-1');
+    expect(msg.is_from_me).toBe(false);
   });
 
-  describe('daily agenda', () => {
-    // Use fake timers so tests are deterministic regardless of wall clock
-    beforeEach(() => {
-      // 2024-06-15 10:00:00 local time
-      vi.useFakeTimers({ now: new Date(2024, 5, 15, 10, 0, 0) });
-    });
+  it('deduplicates events — same event polled twice yields one notification', async () => {
+    const event = makeEvent({ id: 'evt-dup' });
+    mockEventsList.mockResolvedValue({ data: { items: [event] } });
 
-    afterEach(() => {
-      vi.useRealTimers();
-    });
+    const ch = makeChannelWithMainGroup();
+    await (ch as any).checkReminders();
+    await (ch as any).checkReminders();
 
-    it('delivers daily agenda with events', async () => {
-      const opts = makeOptsWithMainGroup();
-      const ch = new GoogleCalendarChannel(opts);
-
-      const events = [
-        makeEvent({
-          id: 'e1',
-          summary: 'Morning Standup',
-          startDateTime: new Date().toISOString(),
-        }),
-        makeEvent({
-          id: 'e2',
-          summary: 'Lunch Meeting',
-          location: 'Cafe',
-          startDateTime: new Date().toISOString(),
-        }),
-      ];
-
-      // Mock: first call is for reminders (empty), second is for agenda
-      mockEventsList
-        .mockResolvedValueOnce({ data: { items: [] } }) // reminders
-        .mockResolvedValueOnce({ data: { items: events } }); // agenda
-
-      (ch as any).calendar = { events: { list: mockEventsList } };
-      // Force agenda to fire: set hour to past
-      (ch as any).agendaHour = 0;
-
-      await (ch as any).poll();
-
-      expect(opts.onMessage).toHaveBeenCalledWith(
-        'tg:main-group',
-        expect.objectContaining({
-          id: 'gcal-agenda:2024-06-15',
-          sender: 'google-calendar',
-        }),
-      );
-
-      const call = (opts.onMessage as ReturnType<typeof vi.fn>).mock.calls[0];
-      const content = call[1].content as string;
-      expect(content).toContain('[Daily Agenda for 2024-06-15]');
-      expect(content).toContain('Morning Standup');
-      expect(content).toContain('Lunch Meeting');
-      expect(content).toContain('(Cafe)');
-    });
-
-    it('only sends agenda once per day', async () => {
-      const opts = makeOptsWithMainGroup();
-      const ch = new GoogleCalendarChannel(opts);
-
-      mockEventsList.mockResolvedValue({ data: { items: [] } });
-      (ch as any).calendar = { events: { list: mockEventsList } };
-      (ch as any).agendaHour = 0;
-
-      await (ch as any).poll();
-      await (ch as any).poll();
-
-      // onMessage called once for the empty-day agenda, not twice
-      expect(opts.onMessage).toHaveBeenCalledTimes(1);
-    });
-
-    it('does not send agenda before configured hour', async () => {
-      // Time is 10:00, set agenda hour to 14 (2 PM)
-      const opts = makeOptsWithMainGroup();
-      const ch = new GoogleCalendarChannel(opts);
-
-      mockEventsList.mockResolvedValue({ data: { items: [] } });
-      (ch as any).calendar = { events: { list: mockEventsList } };
-      (ch as any).agendaHour = 14;
-
-      await (ch as any).poll();
-      expect(opts.onMessage).not.toHaveBeenCalled();
-    });
+    expect(onMessage).toHaveBeenCalledTimes(1);
   });
 
-  describe('no main group', () => {
-    it('does not crash when no main group is registered', async () => {
-      const opts = makeOpts(); // no main group
-      const ch = new GoogleCalendarChannel(opts);
+  it('prunes notified IDs set when exceeding cap', async () => {
+    const ch = makeChannelWithMainGroup();
 
-      const event = makeEvent({ id: 'evt-orphan' });
-      mockEventsList.mockResolvedValue({ data: { items: [event] } });
+    // Fill with 5001 IDs
+    const idSet: Set<string> = (ch as any).notifiedEventIds;
+    for (let i = 0; i < 5001; i++) {
+      idSet.add(`evt-${i}`);
+    }
 
-      (ch as any).calendar = { events: { list: mockEventsList } };
+    mockEventsList.mockResolvedValue({ data: { items: [] } });
+    await (ch as any).checkReminders();
 
-      // Should not throw
-      await (ch as any).checkReminders();
-      expect(opts.onMessage).not.toHaveBeenCalled();
-    });
+    expect((ch as any).notifiedEventIds.size).toBe(2500);
   });
 
-  describe('all-day events', () => {
-    it('formats all-day events as "all-day"', async () => {
-      const opts = makeOptsWithMainGroup();
-      const ch = new GoogleCalendarChannel(opts);
-
-      const event = makeEvent({
-        id: 'evt-allday',
-        summary: 'Holiday',
-        startDate: '2024-12-25',
-      });
-
-      mockEventsList.mockResolvedValue({ data: { items: [event] } });
-      (ch as any).calendar = { events: { list: mockEventsList } };
-
-      await (ch as any).checkReminders();
-
-      const call = (opts.onMessage as ReturnType<typeof vi.fn>).mock.calls[0];
-      const content = call[1].content as string;
-      expect(content).toContain('starts at all-day');
+  it('omits location and link when missing', async () => {
+    mockEventsList.mockResolvedValue({
+      data: {
+        items: [makeEvent({ id: 'evt-min', location: undefined, htmlLink: undefined })],
+      },
     });
+
+    const ch = makeChannelWithMainGroup();
+    await (ch as any).checkReminders();
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    const content = onMessage.mock.calls[0][1].content;
+    expect(content).toContain('[Calendar Reminder]');
+    expect(content).not.toContain('Location:');
+    expect(content).not.toContain('Link:');
   });
 
-  describe('factory registration', () => {
-    it('registerChannel was called at module load with google-calendar', () => {
-      // registerChannel is called at module load time, but vi.clearAllMocks()
-      // in beforeEach clears the call history. Re-import won't re-execute the
-      // module-level side effect. Instead, verify the mock was set up and the
-      // module exports the expected class.
-      expect(vi.isMockFunction(registerChannel)).toBe(true);
-      expect(GoogleCalendarChannel).toBeDefined();
-      expect(new GoogleCalendarChannel(makeOpts()).name).toBe(
-        'google-calendar',
-      );
+  it('uses (No title) for events without summary', async () => {
+    mockEventsList.mockResolvedValue({
+      data: {
+        items: [
+          {
+            id: 'evt-notitle',
+            start: { dateTime: '2026-03-07T10:00:00-05:00' },
+          },
+        ],
+      },
     });
+
+    const ch = makeChannelWithMainGroup();
+    await (ch as any).checkReminders();
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage.mock.calls[0][1].content).toContain('(No title)');
+  });
+
+  it('calls onDirectSend with the main JID and reminder text', async () => {
+    mockEventsList.mockResolvedValue({
+      data: {
+        items: [makeEvent({ id: 'evt-direct', summary: 'Lunch' })],
+      },
+    });
+
+    const ch = makeChannelWithMainGroup();
+    await (ch as any).checkReminders();
+
+    expect(onDirectSend).toHaveBeenCalledTimes(1);
+    expect(onDirectSend).toHaveBeenCalledWith(
+      'tg:main',
+      expect.stringContaining('[Calendar Reminder] "Lunch"'),
+    );
+  });
+
+  it('calls onDirectSend before onMessage for each reminder', async () => {
+    const callOrder: string[] = [];
+    onDirectSend.mockImplementation(() => callOrder.push('directSend'));
+    onMessage.mockImplementation(() => callOrder.push('onMessage'));
+
+    mockEventsList.mockResolvedValue({
+      data: { items: [makeEvent({ id: 'evt-order' })] },
+    });
+
+    const ch = makeChannelWithMainGroup();
+    await (ch as any).checkReminders();
+
+    expect(callOrder).toEqual(['directSend', 'onMessage']);
+  });
+
+  it('still calls onMessage when onDirectSend is not provided', async () => {
+    mockEventsList.mockResolvedValue({
+      data: { items: [makeEvent({ id: 'evt-no-direct' })] },
+    });
+
+    const ch = new GoogleCalendarChannel({
+      onMessage,
+      registeredGroups: () => ({ 'tg:main': mainGroup }),
+    });
+    enableCalendar(ch);
+    await (ch as any).checkReminders();
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('No main group', () => {
+  it('does not crash and does not call onMessage or onDirectSend', async () => {
+    const onMessage = vi.fn();
+    const onDirectSend = vi.fn();
+    mockEventsList.mockResolvedValue({
+      data: { items: [makeEvent()] },
+    });
+
+    const ch = new GoogleCalendarChannel({
+      onMessage,
+      onDirectSend,
+      registeredGroups: () => ({}),
+    });
+    enableCalendar(ch);
+    await (ch as any).checkReminders();
+
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(onDirectSend).not.toHaveBeenCalled();
+  });
+});
+
+describe('Error backoff', () => {
+  it('increments consecutiveErrors on failure and resets on success', async () => {
+    const ch = new GoogleCalendarChannel({
+      onMessage: vi.fn(),
+      registeredGroups: () => ({}),
+    });
+    enableCalendar(ch);
+
+    // Simulate API failure
+    mockEventsList.mockRejectedValueOnce(new Error('API error'));
+    await (ch as any).checkReminders();
+    expect((ch as any).consecutiveErrors).toBe(1);
+
+    // Another failure
+    mockEventsList.mockRejectedValueOnce(new Error('API error'));
+    await (ch as any).checkReminders();
+    expect((ch as any).consecutiveErrors).toBe(2);
+
+    // Success resets
+    mockEventsList.mockResolvedValueOnce({ data: { items: [] } });
+    await (ch as any).checkReminders();
+    expect((ch as any).consecutiveErrors).toBe(0);
+  });
+});
+
+describe('GCAL_REMINDER_MINUTES config', () => {
+  it('uses configured reminder minutes in events.list timeMax', async () => {
+    mockEventsList.mockClear();
+    vi.mocked(readEnvFile).mockReturnValue({ GCAL_REMINDER_MINUTES: '30' });
+
+    const onMessage = vi.fn();
+    const ch = new GoogleCalendarChannel({
+      onMessage,
+      registeredGroups: () => ({ 'tg:main': mainGroup }),
+    });
+    enableCalendar(ch);
+
+    mockEventsList.mockResolvedValue({ data: { items: [] } });
+    await (ch as any).checkReminders();
+
+    expect(mockEventsList).toHaveBeenCalledTimes(1);
+    const callArgs = mockEventsList.mock.calls[0][0];
+    const timeMin = new Date(callArgs.timeMin).getTime();
+    const timeMax = new Date(callArgs.timeMax).getTime();
+    const diffMinutes = (timeMax - timeMin) / (60 * 1000);
+    expect(diffMinutes).toBeCloseTo(30, 0);
   });
 });

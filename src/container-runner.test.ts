@@ -78,6 +78,7 @@ vi.mock('child_process', async () => {
   return {
     ...actual,
     spawn: vi.fn(() => fakeProc),
+    execSync: vi.fn(() => ''),
     exec: vi.fn(
       (_cmd: string, _opts: unknown, cb?: (err: Error | null) => void) => {
         if (cb) cb(null);
@@ -93,7 +94,10 @@ import {
   writeTasksSnapshot,
   writeGroupsSnapshot,
   ContainerOutput,
+  CLEANUP_INTERVAL_MS,
+  _resetCleanupTimer,
 } from './container-runner.js';
+import { execSync } from 'child_process';
 import fs from 'fs';
 import type { RegisteredGroup } from './types.js';
 
@@ -407,5 +411,95 @@ describe('writeGroupsSnapshot', () => {
     expect(otherCall).toBeDefined();
     const otherWritten = JSON.parse(otherCall![1] as string);
     expect(otherWritten.groups).toHaveLength(0);
+  });
+});
+
+// --- Cleanup throttle tests ---
+
+describe('cleanup throttle', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    _resetCleanupTimer();
+    fakeProc = createFakeProcess();
+    vi.mocked(execSync).mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('runs cleanup on first call', async () => {
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+    );
+
+    // Emit output and close immediately
+    fakeProc.stdout.push(
+      `${OUTPUT_START_MARKER}\n${JSON.stringify({ status: 'success', result: 'ok' })}\n${OUTPUT_END_MARKER}\n`,
+    );
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    // execSync should have been called for cleanup (2 status checks: 'created' and 'dead')
+    expect(vi.mocked(execSync).mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('skips cleanup on second call within interval', async () => {
+    // First call
+    let resultPromise = runContainerAgent(testGroup, testInput, () => {});
+    fakeProc.stdout.push(
+      `${OUTPUT_START_MARKER}\n${JSON.stringify({ status: 'success', result: 'ok' })}\n${OUTPUT_END_MARKER}\n`,
+    );
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const callsAfterFirst = vi.mocked(execSync).mock.calls.length;
+
+    // Second call within interval
+    fakeProc = createFakeProcess();
+    resultPromise = runContainerAgent(testGroup, testInput, () => {});
+    fakeProc.stdout.push(
+      `${OUTPUT_START_MARKER}\n${JSON.stringify({ status: 'success', result: 'ok' })}\n${OUTPUT_END_MARKER}\n`,
+    );
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    // No additional execSync calls for cleanup
+    expect(vi.mocked(execSync).mock.calls.length).toBe(callsAfterFirst);
+  });
+
+  it('runs cleanup again after interval expires', async () => {
+    // First call
+    let resultPromise = runContainerAgent(testGroup, testInput, () => {});
+    fakeProc.stdout.push(
+      `${OUTPUT_START_MARKER}\n${JSON.stringify({ status: 'success', result: 'ok' })}\n${OUTPUT_END_MARKER}\n`,
+    );
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    const callsAfterFirst = vi.mocked(execSync).mock.calls.length;
+
+    // Advance past the cleanup interval
+    await vi.advanceTimersByTimeAsync(CLEANUP_INTERVAL_MS + 1);
+
+    // Third call — should run cleanup again
+    fakeProc = createFakeProcess();
+    resultPromise = runContainerAgent(testGroup, testInput, () => {});
+    fakeProc.stdout.push(
+      `${OUTPUT_START_MARKER}\n${JSON.stringify({ status: 'success', result: 'ok' })}\n${OUTPUT_END_MARKER}\n`,
+    );
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+
+    expect(vi.mocked(execSync).mock.calls.length).toBeGreaterThan(
+      callsAfterFirst,
+    );
   });
 });

@@ -1,7 +1,10 @@
 import { execSync } from 'child_process';
 import { logger } from './logger.js';
 
-export async function ensureQdrant(url: string, storageDir: string): Promise<boolean> {
+export async function ensureQdrant(
+  url: string,
+  storageDir: string,
+): Promise<boolean> {
   // 1. Check if Qdrant is already reachable
   try {
     const res = await fetch(url + '/healthz');
@@ -25,9 +28,12 @@ export async function ensureQdrant(url: string, storageDir: string): Promise<boo
 
   // 3. Check if qdrant container exists but is stopped
   try {
-    const status = execSync('docker ps -a --filter name=^qdrant$ --format {{.Status}}', {
-      encoding: 'utf-8',
-    }).trim();
+    const status = execSync(
+      'docker ps -a --filter name=^qdrant$ --format {{.Status}}',
+      {
+        encoding: 'utf-8',
+      },
+    ).trim();
 
     if (status) {
       // Container exists

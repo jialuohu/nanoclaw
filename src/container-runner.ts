@@ -303,6 +303,12 @@ function buildContainerArgs(
   return args;
 }
 
+let lastCleanupTime = 0;
+export const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+export function _resetCleanupTimer(): void {
+  lastCleanupTime = 0;
+}
+
 function cleanupStaleContainers(): void {
   try {
     for (const status of ['created', 'dead']) {
@@ -334,7 +340,11 @@ export async function runContainerAgent(
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
 
-  cleanupStaleContainers();
+  const now = Date.now();
+  if (now - lastCleanupTime > CLEANUP_INTERVAL_MS) {
+    cleanupStaleContainers();
+    lastCleanupTime = now;
+  }
 
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true, mode: 0o777 });

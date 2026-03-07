@@ -159,10 +159,19 @@ export class TelegramChannel implements Channel {
   private bot: Bot | null = null;
   private opts: TelegramChannelOpts;
   private botToken: string;
+  private typingIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
   constructor(botToken: string, opts: TelegramChannelOpts) {
     this.botToken = botToken;
     this.opts = opts;
+  }
+
+  private clearTypingInterval(jid: string): void {
+    const existing = this.typingIntervals.get(jid);
+    if (existing) {
+      clearInterval(existing);
+      this.typingIntervals.delete(jid);
+    }
   }
 
   async connect(): Promise<void> {
@@ -464,6 +473,8 @@ export class TelegramChannel implements Channel {
       return;
     }
 
+    this.clearTypingInterval(jid);
+
     try {
       const numericId = jid.replace(/^tg:/, '');
 
@@ -496,6 +507,10 @@ export class TelegramChannel implements Channel {
 
   async disconnect(): Promise<void> {
     if (this.bot) {
+      for (const interval of this.typingIntervals.values()) {
+        clearInterval(interval);
+      }
+      this.typingIntervals.clear();
       this.bot.stop();
       this.bot = null;
       logger.info('Telegram bot stopped');
@@ -503,13 +518,34 @@ export class TelegramChannel implements Channel {
   }
 
   async setTyping(jid: string, isTyping: boolean): Promise<void> {
-    if (!this.bot || !isTyping) return;
+    if (!isTyping) {
+      this.clearTypingInterval(jid);
+      return;
+    }
+
+    if (!this.bot) return;
+
+    // Clear any existing interval to prevent duplicates
+    this.clearTypingInterval(jid);
+
+    // Send immediately
     try {
       const numericId = jid.replace(/^tg:/, '');
       await this.bot.api.sendChatAction(numericId, 'typing');
     } catch (err) {
       logger.debug({ jid, err }, 'Failed to send Telegram typing indicator');
     }
+
+    // Refresh every 4s (Telegram typing expires after ~5s)
+    const bot = this.bot;
+    const interval = setInterval(() => {
+      const numericId = jid.replace(/^tg:/, '');
+      bot.api.sendChatAction(numericId, 'typing').catch((err) => {
+        logger.debug({ jid, err }, 'Failed to refresh Telegram typing indicator');
+      });
+    }, 4000);
+
+    this.typingIntervals.set(jid, interval);
   }
 }
 

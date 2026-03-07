@@ -27,7 +27,10 @@ export interface SearchResult {
 }
 
 function pointId(id: string, chatJid: string): string {
-  return crypto.createHash('md5').update(id + ':' + chatJid).digest('hex');
+  return crypto
+    .createHash('md5')
+    .update(id + ':' + chatJid)
+    .digest('hex');
 }
 
 export class VectorStore {

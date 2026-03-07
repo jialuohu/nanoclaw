@@ -111,7 +111,11 @@ describe('search', () => {
       },
     ]);
 
-    const results = await store.search(new Array(384).fill(0.1), 'group@g.us', 5);
+    const results = await store.search(
+      new Array(384).fill(0.1),
+      'group@g.us',
+      5,
+    );
 
     expect(mockSearch).toHaveBeenCalledWith('messages', {
       vector: expect.any(Array),

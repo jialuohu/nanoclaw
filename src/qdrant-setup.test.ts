@@ -82,7 +82,9 @@ describe('ensureQdrant', () => {
     const result = await promise;
 
     expect(result).toBe(true);
-    expect(mockExecSync).toHaveBeenCalledWith('docker info', { stdio: 'ignore' });
+    expect(mockExecSync).toHaveBeenCalledWith('docker info', {
+      stdio: 'ignore',
+    });
     expect(mockExecSync).toHaveBeenCalledWith(
       expect.stringContaining('docker run -d --name qdrant'),
       { stdio: 'ignore' },
@@ -172,7 +174,10 @@ describe('ensureQdrant', () => {
 
     expect(result).toBe(true);
     // Should NOT have called docker start or docker run
-    expect(mockExecSync).not.toHaveBeenCalledWith('docker start qdrant', expect.anything());
+    expect(mockExecSync).not.toHaveBeenCalledWith(
+      'docker start qdrant',
+      expect.anything(),
+    );
     expect(mockExecSync).not.toHaveBeenCalledWith(
       expect.stringContaining('docker run'),
       expect.anything(),
