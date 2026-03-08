@@ -63,6 +63,22 @@ server.tool(
 );
 
 server.tool(
+  'get_current_time',
+  'Get the current local time and timezone. Use this before scheduling tasks to ensure correct timing.',
+  {},
+  async () => {
+    const tz = process.env.TZ || 'UTC';
+    const now = new Date();
+    return {
+      content: [{
+        type: 'text' as const,
+        text: `Current time: ${now.toLocaleString('en-US', { timeZone: tz })} (${tz})\nISO (UTC): ${now.toISOString()}`,
+      }],
+    };
+  },
+);
+
+server.tool(
   'schedule_task',
   `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
 
@@ -85,14 +101,14 @@ MODEL SELECTION - Optionally specify which Claude model runs the task:
 • Omit to use the system default (CLAUDE_MODEL from config)
 • Use a full model ID like "claude-sonnet-4-20250514" or "claude-opus-4-20250514"
 
-SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
+SCHEDULE VALUE FORMAT (system timezone: ${process.env.TZ || 'UTC'}):
 \u2022 cron: Standard cron expression (e.g., "*/5 * * * *" for every 5 minutes, "0 9 * * *" for daily at 9am LOCAL time)
 \u2022 interval: Milliseconds between runs (e.g., "300000" for 5 minutes, "3600000" for 1 hour)
-\u2022 once: Local time WITHOUT "Z" suffix (e.g., "2026-02-01T15:30:00"). Do NOT use UTC/Z suffix.`,
+\u2022 once: Timestamp (e.g., "2026-02-01T15:30:00" for local time, or "2026-02-01T23:30:00Z" for UTC)`,
   {
     prompt: z.string().describe('What the agent should do when the task runs. For isolated mode, include all necessary context here.'),
     schedule_type: z.enum(['cron', 'interval', 'once']).describe('cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'),
-    schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'),
+    schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: timestamp like "2026-02-01T15:30:00" (local) or "2026-02-01T23:30:00Z" (UTC)'),
     context_mode: z.enum(['group', 'isolated']).default('group').describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
     target_group_jid: z.string().optional().describe('(Main group only) JID of the group to schedule the task for. Defaults to the current group.'),
     model: z.string().optional().describe('Claude model to use (e.g., "claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-haiku-4-5-20251001"). Omit to use system default.'),
@@ -118,19 +134,15 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
         };
       }
     } else if (args.schedule_type === 'once') {
-      if (/[Zz]$/.test(args.schedule_value) || /[+-]\d{2}:\d{2}$/.test(args.schedule_value)) {
-        return {
-          content: [{ type: 'text' as const, text: `Timestamp must be local time without timezone suffix. Got "${args.schedule_value}" — use format like "2026-02-01T15:30:00".` }],
-          isError: true,
-        };
-      }
       const date = new Date(args.schedule_value);
       if (isNaN(date.getTime())) {
         return {
-          content: [{ type: 'text' as const, text: `Invalid timestamp: "${args.schedule_value}". Use local time format like "2026-02-01T15:30:00".` }],
+          content: [{ type: 'text' as const, text: `Invalid timestamp: "${args.schedule_value}". Use format like "2026-02-01T15:30:00" or "2026-02-01T15:30:00Z".` }],
           isError: true,
         };
       }
+      // Normalize to explicit UTC for unambiguous IPC
+      args = { ...args, schedule_value: date.toISOString() };
     }
 
     // Non-main groups can only schedule for themselves
@@ -154,8 +166,11 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 
     writeIpcFile(TASKS_DIR, data);
 
+    const fireInfo = args.schedule_type === 'once'
+      ? ` (fires at ${new Date(args.schedule_value).toLocaleString('en-US', { timeZone: process.env.TZ || 'UTC' })} ${process.env.TZ || 'UTC'})`
+      : '';
     return {
-      content: [{ type: 'text' as const, text: `Task ${taskId} scheduled: ${args.schedule_type} - ${args.schedule_value}` }],
+      content: [{ type: 'text' as const, text: `Task ${taskId} scheduled: ${args.schedule_type} - ${args.schedule_value}${fireInfo}` }],
     };
   },
 );

@@ -668,6 +668,44 @@ describe('schedule_task schedule types', () => {
     expect(getAllTasks()).toHaveLength(0);
   });
 
+  it('creates task with UTC once timestamp', async () => {
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'utc task',
+        schedule_type: 'once',
+        schedule_value: '2026-06-01T07:00:00Z',
+        targetJid: 'other@g.us',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    const tasks = getAllTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].next_run).toBe('2026-06-01T07:00:00.000Z');
+  });
+
+  it('creates task with timezone-offset once timestamp', async () => {
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'offset task',
+        schedule_type: 'once',
+        schedule_value: '2026-06-01T00:00:00-07:00',
+        targetJid: 'other@g.us',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    const tasks = getAllTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].next_run).toBe('2026-06-01T07:00:00.000Z');
+  });
+
   it('rejects invalid once timestamp', async () => {
     await processTaskIpc(
       {
