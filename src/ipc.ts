@@ -401,6 +401,15 @@ export async function processTaskIpc(
             | 'once';
         if (data.schedule_value !== undefined)
           updates.schedule_value = data.schedule_value;
+        if (data.model !== undefined) {
+          updates.model = data.model || null;
+        }
+        if (data.max_thinking_tokens !== undefined) {
+          updates.max_thinking_tokens =
+            typeof data.max_thinking_tokens === 'string'
+              ? parseInt(data.max_thinking_tokens, 10) || null
+              : data.max_thinking_tokens || null;
+        }
 
         // Recompute next_run if schedule changed
         if (data.schedule_type || data.schedule_value) {

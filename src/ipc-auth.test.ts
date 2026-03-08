@@ -327,6 +327,136 @@ describe('cancel_task authorization', () => {
   });
 });
 
+// --- schedule_task model selection ---
+
+describe('schedule_task model selection', () => {
+  it('schedule_task with model stores model in DB', async () => {
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'task with model',
+        schedule_type: 'once',
+        schedule_value: '2025-06-01T00:00:00.000Z',
+        targetJid: 'other@g.us',
+        model: 'claude-sonnet-4-20250514',
+        max_thinking_tokens: 10000,
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    const tasks = getAllTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].model).toBe('claude-sonnet-4-20250514');
+    expect(tasks[0].max_thinking_tokens).toBe(10000);
+  });
+
+  it('schedule_task without model stores null', async () => {
+    await processTaskIpc(
+      {
+        type: 'schedule_task',
+        prompt: 'task no model',
+        schedule_type: 'once',
+        schedule_value: '2025-06-01T00:00:00.000Z',
+        targetJid: 'other@g.us',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    const tasks = getAllTasks();
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].model).toBeNull();
+  });
+
+  it('update_task with model updates the model', async () => {
+    createTask({
+      id: 'task-model-upd',
+      group_folder: 'other-group',
+      chat_jid: 'other@g.us',
+      prompt: 'original',
+      schedule_type: 'once',
+      schedule_value: '2025-06-01T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: '2025-06-01T00:00:00.000Z',
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    await processTaskIpc(
+      {
+        type: 'update_task',
+        taskId: 'task-model-upd',
+        model: 'claude-opus-4-20250514',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    expect(getTaskById('task-model-upd')!.model).toBe('claude-opus-4-20250514');
+  });
+
+  it('update_task with empty model clears to null', async () => {
+    createTask({
+      id: 'task-model-clear',
+      group_folder: 'other-group',
+      chat_jid: 'other@g.us',
+      prompt: 'with model',
+      schedule_type: 'once',
+      schedule_value: '2025-06-01T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: '2025-06-01T00:00:00.000Z',
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+      model: 'claude-sonnet-4-20250514',
+    });
+
+    await processTaskIpc(
+      {
+        type: 'update_task',
+        taskId: 'task-model-clear',
+        model: '',
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    expect(getTaskById('task-model-clear')!.model).toBeNull();
+  });
+
+  it('update_task with max_thinking_tokens as string parses correctly', async () => {
+    createTask({
+      id: 'task-tokens-str',
+      group_folder: 'other-group',
+      chat_jid: 'other@g.us',
+      prompt: 'thinking test',
+      schedule_type: 'once',
+      schedule_value: '2025-06-01T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: '2025-06-01T00:00:00.000Z',
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    await processTaskIpc(
+      {
+        type: 'update_task',
+        taskId: 'task-tokens-str',
+        max_thinking_tokens: '8000' as unknown as number,
+      },
+      'whatsapp_main',
+      true,
+      deps,
+    );
+
+    expect(getTaskById('task-tokens-str')!.max_thinking_tokens).toBe(8000);
+  });
+});
+
 // --- register_group authorization ---
 
 describe('register_group authorization', () => {

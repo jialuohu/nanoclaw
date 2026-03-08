@@ -401,6 +401,83 @@ describe('task CRUD', () => {
     expect(getTaskById('task-2')!.status).toBe('paused');
   });
 
+  it('creates task with model and max_thinking_tokens', () => {
+    createTask({
+      id: 'task-model',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'test with model',
+      schedule_type: 'once',
+      schedule_value: '2024-06-01T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: '2024-06-01T00:00:00.000Z',
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+      model: 'claude-sonnet-4-20250514',
+      max_thinking_tokens: 10000,
+    });
+
+    const task = getTaskById('task-model');
+    expect(task).toBeDefined();
+    expect(task!.model).toBe('claude-sonnet-4-20250514');
+    expect(task!.max_thinking_tokens).toBe(10000);
+  });
+
+  it('updateTask updates model', () => {
+    createTask({
+      id: 'task-upd-model',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'test',
+      schedule_type: 'once',
+      schedule_value: '2024-06-01T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    updateTask('task-upd-model', { model: 'claude-opus-4-20250514' });
+    expect(getTaskById('task-upd-model')!.model).toBe('claude-opus-4-20250514');
+  });
+
+  it('updateTask clears model with null', () => {
+    createTask({
+      id: 'task-clear-model',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'test',
+      schedule_type: 'once',
+      schedule_value: '2024-06-01T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+      model: 'claude-sonnet-4-20250514',
+    });
+
+    updateTask('task-clear-model', { model: null });
+    expect(getTaskById('task-clear-model')!.model).toBeNull();
+  });
+
+  it('updateTask updates max_thinking_tokens', () => {
+    createTask({
+      id: 'task-upd-tokens',
+      group_folder: 'main',
+      chat_jid: 'group@g.us',
+      prompt: 'test',
+      schedule_type: 'once',
+      schedule_value: '2024-06-01T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: null,
+      status: 'active',
+      created_at: '2024-01-01T00:00:00.000Z',
+    });
+
+    updateTask('task-upd-tokens', { max_thinking_tokens: 5000 });
+    expect(getTaskById('task-upd-tokens')!.max_thinking_tokens).toBe(5000);
+  });
+
   it('deletes a task and its run logs', () => {
     createTask({
       id: 'task-3',

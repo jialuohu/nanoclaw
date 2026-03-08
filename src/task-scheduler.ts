@@ -143,6 +143,8 @@ async function runTask(
       schedule_value: t.schedule_value,
       status: t.status,
       next_run: t.next_run,
+      model: t.model,
+      max_thinking_tokens: t.max_thinking_tokens,
     })),
   );
 

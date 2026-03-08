@@ -81,6 +81,10 @@ MESSAGING BEHAVIOR - The task agent's output is sent to the user or group. It ca
 \u2022 Only send a message when there's something to report (e.g., "notify me if...")
 \u2022 Never send a message (background maintenance tasks)
 
+MODEL SELECTION - Optionally specify which Claude model runs the task:
+• Omit to use the system default (CLAUDE_MODEL from config)
+• Use a full model ID like "claude-sonnet-4-20250514" or "claude-opus-4-20250514"
+
 SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 \u2022 cron: Standard cron expression (e.g., "*/5 * * * *" for every 5 minutes, "0 9 * * *" for daily at 9am LOCAL time)
 \u2022 interval: Milliseconds between runs (e.g., "300000" for 5 minutes, "3600000" for 1 hour)
@@ -91,6 +95,8 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
     schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'),
     context_mode: z.enum(['group', 'isolated']).default('group').describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
     target_group_jid: z.string().optional().describe('(Main group only) JID of the group to schedule the task for. Defaults to the current group.'),
+    model: z.string().optional().describe('Claude model to use (e.g., "claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-haiku-4-5-20251001"). Omit to use system default.'),
+    max_thinking_tokens: z.number().optional().describe('Extended thinking token budget. Higher values allow deeper reasoning. Omit to use default.'),
   },
   async (args) => {
     // Validate schedule_value before writing IPC
@@ -132,7 +138,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 
     const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    const data = {
+    const data: Record<string, string | number | undefined> = {
       type: 'schedule_task',
       taskId,
       prompt: args.prompt,
@@ -142,6 +148,8 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       targetJid,
       createdBy: groupFolder,
       timestamp: new Date().toISOString(),
+      model: args.model || undefined,
+      max_thinking_tokens: args.max_thinking_tokens || undefined,
     };
 
     writeIpcFile(TASKS_DIR, data);
@@ -176,8 +184,8 @@ server.tool(
 
       const formatted = tasks
         .map(
-          (t: { id: string; prompt: string; schedule_type: string; schedule_value: string; status: string; next_run: string }) =>
-            `- [${t.id}] ${t.prompt.slice(0, 50)}... (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}`,
+          (t: { id: string; prompt: string; schedule_type: string; schedule_value: string; status: string; next_run: string; model?: string | null }) =>
+            `- [${t.id}] ${t.prompt.slice(0, 50)}... (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}${t.model ? `, model: ${t.model}` : ''}`,
         )
         .join('\n');
 
@@ -255,6 +263,8 @@ server.tool(
     prompt: z.string().optional().describe('New prompt for the task'),
     schedule_type: z.enum(['cron', 'interval', 'once']).optional().describe('New schedule type'),
     schedule_value: z.string().optional().describe('New schedule value (see schedule_task for format)'),
+    model: z.string().optional().describe('New model for the task. Set to empty string "" to clear and use system default.'),
+    max_thinking_tokens: z.number().optional().describe('New thinking token budget. Set to 0 to clear.'),
   },
   async (args) => {
     // Validate schedule_value if provided
@@ -290,6 +300,8 @@ server.tool(
     if (args.prompt !== undefined) data.prompt = args.prompt;
     if (args.schedule_type !== undefined) data.schedule_type = args.schedule_type;
     if (args.schedule_value !== undefined) data.schedule_value = args.schedule_value;
+    if (args.model !== undefined) data.model = args.model;
+    if (args.max_thinking_tokens !== undefined) data.max_thinking_tokens = String(args.max_thinking_tokens);
 
     writeIpcFile(TASKS_DIR, data);
 

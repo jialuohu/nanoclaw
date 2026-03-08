@@ -371,6 +371,29 @@ describe('task scheduler', () => {
     expect(logs[0].duration_ms).toBeGreaterThanOrEqual(0);
   });
 
+  it('runTask passes model and maxThinkingTokens to runContainerAgent', async () => {
+    createDueTask({
+      id: 'task-model-pass',
+      model: 'claude-sonnet-4-20250514',
+      max_thinking_tokens: 5000,
+    });
+
+    vi.mocked(runContainerAgent).mockResolvedValue({
+      status: 'success',
+      result: 'model done',
+      newSessionId: 'sid-1',
+    });
+
+    const deps = depsWithGroup();
+    startSchedulerLoop(deps);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(runContainerAgent).toHaveBeenCalledTimes(1);
+    const input = vi.mocked(runContainerAgent).mock.calls[0][1];
+    expect(input.model).toBe('claude-sonnet-4-20250514');
+    expect(input.maxThinkingTokens).toBe(5000);
+  });
+
   it('handles container agent errors gracefully', async () => {
     createDueTask({ id: 'task-error' });
 

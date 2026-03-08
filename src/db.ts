@@ -436,7 +436,13 @@ export function updateTask(
   updates: Partial<
     Pick<
       ScheduledTask,
-      'prompt' | 'schedule_type' | 'schedule_value' | 'next_run' | 'status'
+      | 'prompt'
+      | 'schedule_type'
+      | 'schedule_value'
+      | 'next_run'
+      | 'status'
+      | 'model'
+      | 'max_thinking_tokens'
     >
   >,
 ): void {
@@ -462,6 +468,14 @@ export function updateTask(
   if (updates.status !== undefined) {
     fields.push('status = ?');
     values.push(updates.status);
+  }
+  if (updates.model !== undefined) {
+    fields.push('model = ?');
+    values.push(updates.model);
+  }
+  if (updates.max_thinking_tokens !== undefined) {
+    fields.push('max_thinking_tokens = ?');
+    values.push(updates.max_thinking_tokens);
   }
 
   if (fields.length === 0) return;

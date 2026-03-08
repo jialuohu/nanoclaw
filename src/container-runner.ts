@@ -731,6 +731,8 @@ export function writeTasksSnapshot(
     schedule_value: string;
     status: string;
     next_run: string | null;
+    model?: string | null;
+    max_thinking_tokens?: number | null;
   }>,
 ): void {
   // Write filtered tasks to the group's IPC directory
